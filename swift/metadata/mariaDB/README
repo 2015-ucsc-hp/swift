@@ -1,0 +1,4 @@
+Replace server.py and backend.py in ../ if you wish to use mariaDB.
+Currently you must update backend.py to have the IP address of your mariaDB
+or MaxScale load balancer. This will be updated to pull from the metadata
+configuration file.
