@@ -1,0 +1,7 @@
+This implementation needs to be updated to the new version of swift and
+tested. Do not use it for any purposes other than development.
+
+To use orientDB as the backend for swift's metadata server, replace
+backend.py in ../ with th copy in this directory. A new version will 
+most likely need to be made or copied from ../mariaDB for the new 
+version of swift.
