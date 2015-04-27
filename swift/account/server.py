@@ -39,7 +39,7 @@ from swift.common.swob import HTTPAccepted, HTTPBadRequest, \
     HTTPPreconditionFailed, HTTPConflict, Request, \
     HTTPInsufficientStorage, HTTPException
 from swift.common.request_helpers import is_sys_or_user_meta
-
+from swift.metadata.utils import Sender
 
 class AccountController(BaseStorageServer):
     """WSGI controller for the account server."""
@@ -157,9 +157,39 @@ class AccountController(BaseStorageServer):
                             if is_sys_or_user_meta('account', key))
             if metadata:
                 broker.update_metadata(metadata, validate_metadata=True)
+            
             if created:
+                metaDict = {}
+                metaList = []
+                f = open('/home/ubuntu/accountstuff','w')
+                metaDict = broker.get_info()
+                metaDict.update(
+                    (key, value)
+                    for key, (value, timestamp) in broker.metadata.iteritems()
+                    if value != '' and is_sys_or_user_meta('account', key))
+                if metaDict != {}:
+                    metaList.append(format_metadata(metaDict))
+                    for item in metaList:
+                        f.write("%s\n" % item)
+                    AccountSender = Sender(self.conf)
+                    AccountSender.sendData(metaList, 'account_data', self.ip, self.port)
+            #####################################    
                 return HTTPCreated(request=req)
             else:
+                metaDict = {}
+                metaList = []
+                f = open('/home/ubuntu/accountstuff','w')
+                metaDict = broker.get_info()
+                metaDict.update(
+                    (key, value)
+                    for key, (value, timestamp) in broker.metadata.iteritems()
+                    if value != '' and is_sys_or_user_meta('account', key))
+                if metaDict != {}:
+                    metaList.append(format_metadata(metaDict))
+                    for item in metaList:
+                        f.write("%s\n" % item)
+                    AccountSender = Sender(self.conf)
+                    AccountSender.sendData(metaList, 'account_data', self.ip, self.port)
                 return HTTPAccepted(request=req)
 
     @public
@@ -295,3 +325,38 @@ def app_factory(global_conf, **local_conf):
     conf = global_conf.copy()
     conf.update(local_conf)
     return AccountController(conf)
+
+def format_metadata(data):
+    metadata = {}
+    uri = "/" + data['account']
+    metadata['account_uri'] = uri
+    metadata['account_name'] = data['account']
+    metadata['account_tenant_id'] = data.setdefault('id', 'NULL')
+    metadata['account_first_use_time'] = data.setdefault('created_at', 'NULL')
+    metadata['account_last_modified_time'] = \
+        data.setdefault('put_timestamp', 'NULL')
+
+    metadata['account_last_changed_time'] =  \
+        data.setdefault('put_timestamp', 'NULL')
+
+    metadata['account_delete_time'] = \
+        data.setdefault('delete_timestamp', 'NULL')
+
+    metadata['account_last_activity_time'] = \
+        data.setdefault('put_timestamp', 'NULL')
+
+    metadata['account_container_count'] = \
+        data.setdefault('container_count', 'NULL')
+
+    metadata['account_object_count'] = \
+        data.setdefault('object_count', 'NULL')
+
+    metadata['account_bytes_used'] = data.setdefault('bytes_used', 'NULL')
+
+    #Insert all Account custom metadata
+    for custom in data:
+        if(custom.lower().startswith("x-account-meta")):
+            sanitized_custom = custom[2:14].lower() + custom[14:]
+            sanitized_custom = sanitized_custom.replace('-', '_')
+            metadata[sanitized_custom] = data[custom]
+    return metadata
