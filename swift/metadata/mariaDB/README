@@ -69,11 +69,43 @@ Then start mariaDB on rest of nodes with the command:
 At this point any change to a mariaDB database on one node should propogate to
 the other nodes.
 
-TODO: insert debugging info and known common mistakes
+TODO: insert debugging info and known common mistakes such as failure
+      to start mysql service due to permission errors, mariadb not
+      asking to set root password at install, or he cluster nodes arent
+      connencting to each other.
 
-TODO: insert explanation of how to check that the cluster is functioning.
+TODO: insert explanation of how to check that the cluster is functioning
+      by checking wsrep_size or inserting a database to be replicated.
 
-TODO: insert explanation of mariadb/galera/maxscale
+====================================================================
+What are MariaDB/Galera/MaxScale/all the other packages we install?
+====================================================================
+MariaDB is a drop-in replacement of MySQL. It is a fork of MySQL that
+is "free" under the GPL v2 license and its goal is to remain compatible 
+and equivalent with MySQL features.
+
+MariaDB Galera Server is a version of mariaDB that has integrated the 
+multi-master replication/high availability software Galera. Galera 
+allows mariaDB to operate as a cluster of multiple servers hosting the 
+same database. A client can read the database from any node in the 
+cluster. When a client makes a write to any node in the cluster it is 
+replicated to all nodes in the cluster. This replication functionality 
+allows the number of clients reading the database to scale by simply adding
+more cluster nodes. It also ensures that if any node fails, the database 
+is already replicated on the rest of the cluster. However, since a write
+sent to any node is immediately replicated to all nodes, writes do not
+truly scale as more nodes are added.
+
+The load balancer, MaxScale, must be installed in order to truly scale 
+the reads sent to mariaDB. The code in backend.py connects to the single
+MaxScale server's IP and sends all queries to it. MaxScale then 
+distributes the queries among all the mariaDB nodes in order to balance 
+their read load.
+
+As a note the package "libmariadbclient-dev" was installed to prevent an
+error encountered when installing the python mysql driver with the command
+"sudo pip install MySQL-python". MySQL-python is the library imported by
+backend.py inorder to connect and send queries to mariaDB.
 
 ===========================================
 The general steps to installing MaxScale:
