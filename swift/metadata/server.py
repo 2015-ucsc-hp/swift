@@ -393,7 +393,7 @@ class MetadataController(object):
             try:
                 for item in self.devicelist:
                     if node['device'] in item:
-                        df = self.diskfile_mgr.get_diskfile(item,part,acc,con,obj,stor_policy)
+                        df = self.df_mgr.get_diskfile(item,part,acc,con,obj,stor_policy)
                         md = df.read_metadata()
                         for element in md:
                             pass
