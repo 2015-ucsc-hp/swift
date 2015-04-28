@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import os
+import sys
 import time
 import traceback
 from swift import gettext_ as _
@@ -37,64 +38,20 @@ from swift.common.swob import HTTPBadRequest, HTTPConflict, \
     HTTPPreconditionFailed, HTTPMethodNotAllowed, Request, Response, \
     HTTPException
 
-from swift.metadata.utils import output_plain, output_json, output_xml, Sort_metadata, Sender
-#################################################
-from random import random
-from swift.common.daemon import Daemon
-from swift.metadata.utils import Sender
-from swift.common.request_helpers import get_name_and_placement, \
-    is_user_meta, is_sys_or_user_meta, split_and_validate_path
-from swift.container import server as container_server
+from swift.metadata.utils import output_plain, output_json, output_xml, Sort_metadata
 
-from swift.container.backend import ContainerBroker
 
-#################################################
+from swift.common.exceptions import DiskFileQuarantined, DiskFileNotExist, \
+    DiskFileCollision, DiskFileNoSpace, DiskFileDeviceUnavailable, \
+    DiskFileDeleted, DiskFileError, DiskFileNotOpen, PathNotDir, \
+    ReplicationLockTimeout, DiskFileExpired, DiskFileXattrNotSupported
+
+from swift.proxy.controllers.base import get_container_info
+from swift.obj.diskfile import DiskFileManager, DiskFileNotExist
+from swift.common.storage_policy import POLICIES
+
 DATADIR = 'metadata'
-def format_metadata(data):
-    metadata = {}
-    uri = "/" + data['account'] + "/" + data['container']
-    metadata['container_uri'] = uri
-    metadata['container_name'] = data['container']
-    metadata['container_account_name'] = data['account']
-    metadata['container_create_time'] = data.setdefault('created_at', 'NULL')
-    metadata['container_last_modified_time'] = \
-        data.setdefault('put_timestamp', 'NULL')
 
-    metadata['container_last_changed_time'] = \
-        data.setdefault('put_timestamp', 'NULL')
-
-    metadata['container_delete_time'] = \
-        data.setdefault('delete_timestamp', 'NULL')
-
-    metadata['container_last_activity_time'] = \
-        data.setdefault('put_timestamp', 'NULL')
-
-        #last_activity_time needs to be updated on meta server
-    metadata['container_read_permissions'] = 'NULL'  # Not Implemented yet
-    metadata['container_write_permissions'] = 'NULL'
-    metadata['container_sync_to'] = \
-        data.setdefault('x_container_sync_point1', 'NULL')
-
-    metadata['container_sync_key'] = \
-        data.setdefault('x_container_sync_point2', 'NULL')
-
-    metadata['container_versions_location'] = 'NULL'
-    metadata['container_object_count'] = \
-        data.setdefault('object_count', 'NULL')
-
-    metadata['container_bytes_used'] = \
-        data.setdefault('bytes_used', 'NULL')
-
-    metadata['container_delete_at'] = \
-        data.setdefault('delete_timestamp', 'NULL')
-
-    #Insert all Container custom metadata
-    for custom in data:
-        if(custom.startswith("X-Container-Meta")):
-            sanitized_custom = custom[2:16].lower() + custom[16:]
-            sanitized_custom = sanitized_custom.replace('-', '_')
-            metadata[sanitized_custom] = data[custom]
-    return metadata
 """
 List of system attributes supported from OSMS API
 """
@@ -178,6 +135,11 @@ class MetadataController(object):
         self.db_file = os.path.join(self.location, 'meta.db')
         self.logger = logger or get_logger(conf, log_route='metadata-server')
         self.root = conf.get('devices', '/srv/node')
+        #workaround for device listings
+        self.node_count = conf.get('nodecount','8')
+        self.devicelist = []
+        for x in range(0,int(self.node_count)):
+            self.devicelist.append(conf.get('device'+str(x),''))
         self.mount_check = config_true_value(conf.get('mount_check', 'true'))
         self.node_timeout = int(conf.get('node_timeout', 3))
         self.conn_timeout = float(conf.get('node_timeout', 3))
@@ -197,6 +159,8 @@ class MetadataController(object):
             self.mount_check,
             logger=self.logger
         )
+        
+        self.df_mgr = DiskFileManager(conf,self.logger)
 
         if config_true_value(conf.get('allow_versions', 'f')):
             self.save_headers.append('x-versions-location')
@@ -216,6 +180,7 @@ class MetadataController(object):
         Verify that attributes are valid
         Checks the attr list against a list of system attributes
         Allows for custom metadata.
+
         returns: boolean wether the attrs are valid
         """
         for attr in attrs.split(','):
@@ -306,7 +271,6 @@ class MetadataController(object):
         Custom attributes need to be handled specially, since they exist
         in a seperate table
         """
-        
         broker = self._get_metadata_broker()
 
         base_version, acc, con, obj = split_path(req.path, 1, 4, True)
@@ -417,13 +381,37 @@ class MetadataController(object):
     @public
     @timing_stats()
     def PUT(self, req):
+        version, acc, con, obj = split_path(req.path,1,4,True)
+        if not obj:
+            #deal with container or account request in this case
+            return
+        stor_policy = req.headers['storage_policy']
+        obj_ring = POLICIES.get_object_ring(stor_policy,'/etc/swift')
+        part = obj_ring.get_part(acc,con,obj)
+        nodes = obj_ring.get_part_nodes(part)
+        for node in nodes:
+            try:
+                for item in self.devicelist:
+                    if node['device'] in item:
+                        df = self.diskfile_mgr.get_diskfile(item,part,acc,con,obj,stor_policy)
+                        md = df.read_metadata()
+                        for element in md:
+                            pass
+                            #gather md and pass to backend
+            except:
+                self.logger.warn("Error: " + str(sys.exc_info()[0]) + "\n")
+                pass
+        return
+
         """
         Handles incoming PUT requests
         Crawlers running on the object/container/account servers
         will send over new metadata. This is where that new metadata
         is sent to the database
-        """
-#        drive, part, account, container, obj = swift.common.request_helpers.split_and_validate_path(req, 4, 5, True)
+        
+        broker = self._get_metadata_broker()
+
+        # Call broker insertion
         if 'user-agent' not in req.headers:
 
             return HTTPBadRequest(
@@ -433,17 +421,39 @@ class MetadataController(object):
             )
         md_type = req.headers['user-agent']
         md_data = json.loads(req.body)
-        if md_type == 'account_data':
-            j = open('/home/ubuntu/accountmetadata', 'w')
-            for item in md_data:
-                j.write("%s\n" % item)  
-        elif md_type == 'container_data':
-            j = open('/home/ubuntu/containermetadata', 'w')
-            for item in md_data:
-                j.write("%s\n" % item)
 
+        if not os.path.exists(broker.db_file):
+            try:
+                broker.initialize(time.time())
+                # created = True
+            except DatabaseAlreadyExists:
+                # created = False
+                pass
+        else:
+            #created = broker.is_deleted(md_type)
+            # broker.update_put_timestamp(time.time())
+            if broker.is_deleted(md_type):
+                return HTTPConflict(request=req)
 
+        # check the user agent type
+        if md_type == 'account_crawler':
+            # insert accounts
+            broker.insert_account_md(md_data)
+        elif md_type == 'container_crawler':
+            # Insert containers
+            broker.insert_container_md(md_data)
+        elif md_type == 'object_crawler':
+            # Insert object
+            broker.insert_object_md(md_data)
+        else:
+            # raise exception
+            return HTTPBadRequest(
+                body='Invalid user agent',
+                request=req,
+                content_type='text/plain'
+            )
         return HTTPNoContent(request=req)
+        """
 
     def __call__(self, env, start_response):
         """
@@ -537,6 +547,7 @@ def eval_superset(attrs):
     the list and if there is a superset attrs
     replace it with the set of attrs represented
     through by the superset attr
+
     If custom metadata superset attr is included,
     also return a boolean for wether or not
     to include all metadata for obj/con/acc
@@ -544,6 +555,7 @@ def eval_superset(attrs):
     to the attr list. These flags will
     be used later in the query to the
     custom table
+
     Returns the expanded attrs as a string, along with the bool vals.
     """
     expanded = set()
@@ -593,4 +605,3 @@ def eval_superset(attrs):
         else:
             expanded.add(attr)
     return (",".join(list(expanded)), cust_obj, cust_con, cust_acc)
-
