@@ -18,8 +18,7 @@ from string import maketrans
 from swift.common.utils import normalize_timestamp
 from swift.common.db import DatabaseBroker
 from swift.common.utils import json
-
-# TODO: import correct orient python driver
+import pyorient as po
 
 """ server.py creates MetadataBroker(OrientDBBroker) which calls __init__(),
     server.py calls initialize() in OrientDBBroker,
