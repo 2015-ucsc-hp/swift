@@ -2,6 +2,101 @@ This implementation needs to be updated to the new version of swift and
 tested. Do not use it for any purposes other than development.
 
 To use orientDB as the backend for swift's metadata server, replace
-backend.py in ../ with th copy in this directory. A new version will 
-most likely need to be made or copied from ../mariaDB for the new 
-version of swift.
+backend.py and server.py in ../ with the copy in this directory.
+Currently you must update backend.py to have the IP address of any orientDB
+node in the cluster. This will be updated to pull from the metadata
+configuration file.
+
+TODO: Clean up and double check the installation guide to make sure
+      it is not missing and steps.
+      
+TODO: Detail the database created by metadata server.
+      
+===================================================================
+The general steps to installing orientDB on Ubuntu 12.04 and 14.04: 
+===================================================================
+Run the following commands on >=3 nodes:
+   sudo apt-get update
+   sudo apt-get install openjdk-7-jdk git ant
+   git clone https://github.com/orientechnologies/orientdb.git
+   cd orientdb
+   ant clean install
+   
+   
+
+Find the <network> tag in /releases/orientdb-community-2.1-rc1/config/hazelcast.xml
+Insert <member>ip:port</member>(the one in the <port> tag) for every node
+in the cluster. Enable tcp-ip(<tcp-ip enabled="true">) and 
+disable multicast(<multicast enabled="false">). Also disable port's 
+auto-increment(<port auto-increment="false">).
+
+   <group>
+       <name>custom_name</name>
+       <password>{custom_password}</password>
+   </group>
+	<network>
+		<port auto-increment="false">2434</port>
+		<join>
+			<multicast enabled="false">
+				<multicast-group>235.1.1.1</multicast-group>
+				<multicast-port>2434</multicast-port>
+			</multicast>
+         <tcp-ip enabled="true">
+            <member>128.114.52.190:2434</member>
+            <member>128.114.52.191:2434</member>
+            <member>128.114.52.195:2434</member>
+         </tcp-ip>  
+		</join>
+	</network>
+
+Insert the names of the nodes in the servers tag in
+/releases/orientdb-community-2.1-rc1/config/default-distributed-db-config.json 
+
+  "clusters": {
+    "internal": {
+    },
+    "index": {
+    },
+    "*": {
+      "servers": ["bels1","bels2","bels3"]
+    }
+  }
+
+
+In /releases/orientdb-community-2.1-rc1/config/orientdb-server-config.xml
+update the OHazelcastPlugin handler to have the nodeName and enabled paramaters
+as seen below:
+
+  <handler class="com.orientechnologies.orient.server.hazelcast.OHazelcastPlugin">
+      <parameters>
+          <parameter value="bels1" name="nodeName"/>
+          <parameter value="true" name="enabled"/>
+          <parameter value="${ORIENTDB_HOME}/config/default-distributed-db-config.json" name="configuration.db.default"/>
+          <parameter value="${ORIENTDB_HOME}/config/hazelcast.xml" name="configuration.hazelcast"/>
+      </parameters>
+  </handler>
+  
+  
+Add a user tag in:
+   <users>
+      <user name=”root” password=”qwerty” resources=”*”/>
+   </users>
+   
+Update the port range in:
+   <listener protocol="http" socket="default" port-range="8080-8090" ip-address="0.0.0.0">
+   
+After all the nodes are configured startup 
+
+#TODO: Insert rest of clustering steps
+
+#TODO: Insert beginning of startup/console steps
+
+#TODO: These db creation steps can be removes, theyre done by swift
+Run sudo ./console.sh in /releases/orientdb-community-2.1-rc1/bin/
+Connect to the server with(change the user/password to yours):
+
+   connect remote:localhost USER PASSWORD
+
+Create the metadata database with(change the user/password and the path up to /releases):
+
+   create database remote:/usr/hp/home/releases/orientdb-community-2.1-rc1/databases/metadata USER PASSWORD plocal

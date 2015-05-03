@@ -53,8 +53,10 @@ Then run the following commands to stop the mysql service.
    sudo service mysql stop
    sudo killall mysqld
 
-The configuration steps above must be repeated for an odd number of nodes
->=3. Once they are all configured up to this point you can continue.
+The configuration steps above must be repeated for all nodes. Note: there 
+must be an odd number of nodes >=3 in order to guarantee a proper quorum 
+that can settle database inconsistencies between the nodes. 
+Once they are all configured up to this point you can continue.
 
 If you recall the root node is the one listed first in cluster.cnf's variable
 "wsrep_cluster_address".
@@ -69,13 +71,16 @@ Then start mariaDB on rest of nodes with the command:
 At this point any change to a mariaDB database on one node should propogate to
 the other nodes.
 
-TODO: insert debugging info and known common mistakes such as failure
+TODO: Insert debugging info and known common mistakes such as failure
       to start mysql service due to permission errors, mariadb not
       asking to set root password at install, or he cluster nodes arent
       connencting to each other.
 
-TODO: insert explanation of how to check that the cluster is functioning
+TODO: Insert explanation of how to check that the cluster is functioning
       by checking wsrep_size or inserting a database to be replicated.
+
+TODO: Detail the database created by the metadata server, and how query
+      results are generated.
 
 ====================================================================
 What are MariaDB/Galera/MaxScale/all the other packages we install?
@@ -111,3 +116,5 @@ backend.py inorder to connect and send queries to mariaDB.
 The general steps to installing MaxScale:
 ===========================================
 As a note, Maxscale must be installed on a 64 bit OS.
+
+TODO
