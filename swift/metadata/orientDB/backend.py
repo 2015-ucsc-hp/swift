@@ -16,23 +16,37 @@ import os
 import time
 from string import maketrans
 from swift.common.utils import normalize_timestamp
-from swift.common.db import DatabaseBroker
 from swift.common.utils import json
-import pyorient as po
+import pyorient
+
+# TODO: When server.py is cleaned up this can be removed
+BROKER_TIMEOUT = 25
 
 """ server.py creates MetadataBroker(OrientDBBroker) which calls __init__(),
     server.py calls initialize() in OrientDBBroker,
     initialize() calls _initialize() in MetadataBroker
 """
 class OrientDBBroker(object):
-    """Encapsulates working with an OrientDB database."""
+    """
+    Encapsulates working with an OrientDB database.
 
-    def __init__(self, db_address, timeout=BROKER_TIMEOUT):
-        """Encapsulates working with a database."""
+    server.py creates MetadataBroker(OrientDBBroker) which calls OrientDBBroker.__init__(),
+    server.py calls OrientDBBroker.initialize(),
+    if the tables do not exist server.py calls MetadataBroker._initialize()
+    """
+
+    # TODO: update defn and function calls in server.py to be simpler
+    #       and trim out unused portions of sqlite code
+    def __init__(self, db_file, timeout=BROKER_TIMEOUT, logger=None,
+                 account=None, container=None, pending_timeout=None,
+                 stale_reads_ok=False):
         self.conn = None
-        self.db_address = db_address
+        self.db_address = "127.0.0.1"
         self.timeout = timeout
-        
+
+    # TODO: rename to connect(), check failure for db not exist and
+    # prevent further use in server.py
+    # TODO: Retrieve IP/user/pw of an orientdb node from configuration file
     def initialize(self, put_timestamp=None):
         """
         Create the DB
@@ -40,12 +54,14 @@ class OrientDBBroker(object):
         :param put_timestamp: timestamp of initial PUT request
         """
         self.conn = pyorient.OrientDB("localhost", 2424)
+        self.conn.connect("root","hpgroup")
         if not self.conn.db_exists("metadata", pyorient.STORAGE_TYPE_PLOCAL):
             self.conn.db_create( "metadata", pyorient.DB_TYPE_DOCUMENT, pyorient.STORAGE_TYPE_PLOCAL )
+            # Does this autoconnect? Does it block to create the DB?
             self._initialize(self.conn, put_timestamp)
-        self.conn.db_open("metadata", "root", "root")
-      
-      
+        self.conn.db_open("metadata", "root", "hpgroup")
+
+
 class MetadataBroker(OrientDBBroker):
     """
     initialize the database and four tables.
@@ -115,16 +131,16 @@ class MetadataBroker(OrientDBBroker):
         "object_access_control_request_method",
         "object_access_control_request_headers"
     ]
-    
-    def _initialize(self, conn, timestamp):
-        self.create_md_table(conn)
-        self.create_custom_md_table(conn)
+
+    def _initialize(self, timestamp):
+        self.create_md_table(self.conn)
+        self.create_custom_md_table(self.conn)
 
     def create_md_table(self, conn):
         conn.batch("""
             CREATE CLASS Metadata;
             CREATE PROPERTY Metadata.account_uri STRING;
-            CREATE PROPERTY Metadata.account_name LONG;
+            CREATE PROPERTY Metadata.account_name STRING;
             CREATE PROPERTY Metadata.account_tenant_id STRING;
             CREATE PROPERTY Metadata.account_first_use_time DATETIME;
             CREATE PROPERTY Metadata.account_last_modified_time DATETIME;
@@ -136,7 +152,7 @@ class MetadataBroker(OrientDBBroker):
             CREATE PROPERTY Metadata.account_bytes_used LONG;
             CREATE PROPERTY Metadata.container_uri STRING;
             CREATE PROPERTY Metadata.container_name STRING;
-            CREATE PROPERTY Metadata.container_account_name LONG;
+            CREATE PROPERTY Metadata.container_account_name STRING;
             CREATE PROPERTY Metadata.container_create_time DATETIME;
             CREATE PROPERTY Metadata.container_last_modified_time DATETIME;
             CREATE PROPERTY Metadata.container_last_changed_time DATETIME;
@@ -200,7 +216,6 @@ class MetadataBroker(OrientDBBroker):
                 timestamp = '%s'
             UPSERT WHERE uri = '%s'"
         '''
-
         # Build and execute query for each requested insertion
         formatted_query = \
             query % (uri, key, value, normalize_timestamp(time.time()), uri)
@@ -208,38 +223,154 @@ class MetadataBroker(OrientDBBroker):
 
     def insert_account_md(self, data):
         """Data insertion method for account metadata"""
-        with self.get() as conn:
-            query = "UPDATE Metadata SET "
-            inserted_fields = []
-            for field, value in data.items():
-                inserted_fields.append(str(field) + " = '" + str(value) + "'")
-            query += " ,".join(inserted_fields)
-            query += " UPSERT WHERE account_uri = '" + str(data['account_uri']) + "'"
-            conn.command(query)
+        query = '''UPDATE Metadata SET 
+                account_uri = "%s",
+                account_name = "%s",
+                account_tenant_id = "%s", 
+                account_first_use_time = %s, 
+                account_last_modified_time = %s, 
+                account_last_changed_time = %s, 
+                account_delete_time = %s, 
+                account_last_activity_time = %s, 
+                account_container_count = %s, 
+                account_object_count = %s, 
+                account_bytes_used = %s 
+            UPSERT WHERE 
+                account_uri = "%s"
+        '''
+
+        for row in data:
+            formatted_query = query % (
+                row['account_uri'],
+                row['account_name'],
+                row['account_tenant_id'],
+                row['account_first_use_time'],
+                row['account_last_modified_time'],
+                row['account_last_changed_time'],
+                row['account_delete_time'],
+                row['account_last_activity_time'],
+                row['account_container_count'],
+                row['account_object_count'],
+                row['account_bytes_used'],
+                row['account_uri']
+            )            
+            self.conn.command(formatted_query)
 
     # TODO: query for account metadata, and put into data for insert
     def insert_container_md(self, data):
         """Data insertion method for container metadata"""
-        with self.get() as conn:
-            query = "UPDATE Metadata SET "
-            inserted_fields = []
-            for field, value in data.items():
-                inserted_fields.append(str(field) + " = '" + str(value) + "'")
-            query += " ,".join(inserted_fields)
-            query += " UPSERT WHERE container_uri = '" + str(data['container_uri']) + "'"
-            conn.command(query)
+        query = '''UPDATE Metadata SET 
+                container_uri = "%s",
+                container_name = "%s",
+                container_account_name = "%s",
+                container_create_time = %s,
+                container_last_modified_time = %s,
+                container_last_changed_time = %s,
+                container_delete_time = %s,
+                container_last_activity_time = %s,
+                container_read_permissions = "%s",
+                container_write_permissions = "%s",
+                container_sync_to = "%s",
+                container_sync_key = "%s",
+                container_versions_location = "%s",
+                container_object_count = %s,
+                container_bytes_used = %s 
+            UPSERT WHERE 
+                container_uri = "%s"
+        '''
+
+        for row in data:
+            formatted_query = query % (
+                row['container_uri'],
+                row['container_name'],
+                row['container_account_name'],
+                row['container_create_time'],
+                row['container_last_modified_time'],
+                row['container_last_changed_time'],
+                row['container_delete_time'],
+                row['container_last_activity_time'],
+                row['container_read_permissions'],
+                row['container_write_permissions'],
+                row['container_sync_to'],
+                row['container_sync_key'],
+                row['container_versions_location'],
+                row['container_object_count'],
+                row['container_bytes_used'],
+                row['container_uri']
+            )
+            self.conn.command(formatted_query)
 
     # TODO: query for account,container metadata, and put into data for insert
     def insert_object_md(self, data):
         """Data insertion method for object metadata"""
-        with self.get() as conn:
-            query = "UPDATE Metadata SET "
-            inserted_fields = []
-            for field, value in data.items():
-                inserted_fields.append(str(field) + " = '" + str(value) + "'")
-            query += " ,".join(inserted_fields)
-            query += " UPSERT WHERE object_uri = '" + str(data['object_uri']) + "'"
-            conn.command(query)
+        query = '''UPDATE Metadata SET
+                object_uri = "%s",
+                object_name = "%s",
+                object_account_name = "%s",
+                object_container_name = "%s",
+                object_location = "%s",
+                object_uri_create_time = %s,
+                object_last_modified_time = %s,
+                object_last_changed_time = %s,
+                object_delete_time = %s,
+                object_last_activity_time = %s,
+                object_etag_hash = "%s",
+                object_content_type = "%s",
+                object_content_length = %s,
+                object_content_encoding = "%s",
+                object_content_disposition = "%s",
+                object_content_language = "%s",
+                object_cache_control = "%s",
+                object_delete_at = %s,
+                manifest_type = %s,
+                object_manifest = "%s",
+                object_access_control_allow_origin = "%s",
+                object_access_control_allow_credentials = "%s",
+                object_access_control_expose_headers = "%s",
+                object_access_control_max_age = "%s",
+                object_allow_methods = "%s",
+                object_allow_headers = "%s",
+                object_origin = "%s",
+                object_access_control_request_method = "%s",
+                object_access_control_request_headers = "%s"
+            UPSERT WHERE 
+                object_uri = "%s"
+        '''
+
+        for row in data:
+            formatted_query = query % (
+                row['object_uri'],
+                row['object_name'],
+                row['object_account_name'],
+                row['object_container_name'],
+                row['object_location'],
+                row['object_uri_create_time'],
+                row['object_last_modified_time'],
+                row['object_last_changed_time'],
+                row['object_delete_time'],
+                row['object_last_activity_time'],
+                row['object_etag_hash'],
+                row['object_content_type'],
+                row['object_content_length'],
+                row['object_content_encoding'],
+                row['object_content_disposition'],
+                row['object_content_language'],
+                row['object_cache_control'],
+                row['object_delete_at'],
+                row['object_manifest_type'],
+                row['object_manifest'],
+                row['object_access_control_allow_origin'],
+                row['object_access_control_allow_credentials'],
+                row['object_access_control_expose_headers'],
+                row['object_access_control_max_age'],
+                row['object_access_control_allow_methods'],
+                row['object_access_control_allow_headers'],
+                row['object_origin'],
+                row['object_access_control_request_method'],
+                row['object_access_control_request_headers'],
+                row['object_uri']
+            )
+            self.conn.command(formatted_query)
 
     def overwrite_custom_md(self, conn, uri, data):
         """Data overwrite method for custom metadata table,
@@ -251,7 +382,7 @@ class MetadataBroker(OrientDBBroker):
             inserted_fields.append(str(field) + " <> '" + str(value) + "'")
         query += " and ".join(inserted_fields)
         conn.command(query)
-        
+
         # Update all custom metadata listed in data
         for field, value in data.items():
             insert_custom_md(self, conn, uri, field, value)
@@ -262,17 +393,16 @@ class MetadataBroker(OrientDBBroker):
     def overwrite_account_md(self, data):
         """Data overwrite method for account data in metadata table,
         nulls all fields that are not updated"""
-        with self.get() as conn:
-            query = "UPDATE Metadata SET "
-            inserted_fields = []
-            for field in account_fields:
-                if field in data:
-                    inserted_fields.append(str(field) + " = '" + str(data[field]) + "'")
-                else:
-                    inserted_fields.append(str(field) + " = null")
-            query += " and " + " ,".join(inserted_fields)
-            query += " UPSERT WHERE account_uri = '" + str(data['account_uri']) + "'"
-            conn.command(query)
+        query = "UPDATE Metadata SET "
+        inserted_fields = []
+        for field in account_fields:
+            if field in data:
+                inserted_fields.append(str(field) + " = '" + str(data[field]) + "'")
+            else:
+                inserted_fields.append(str(field) + " = null")
+        query += " and " + " ,".join(inserted_fields)
+        query += " UPSERT WHERE account_uri = '" + str(data['account_uri']) + "'"
+        self.conn.command(query)
 
     # TODO: analyze, accounts/containers cannot be deleted unless empty
     #       so overwrite does not need to affect lower level hierarchies
@@ -280,17 +410,16 @@ class MetadataBroker(OrientDBBroker):
     def overwrite_container_md(self, data):
         """Data overwrite method for container data in metadata table,
         nulls all fields that are not updated"""
-        with self.get() as conn:
-            query = "UPDATE Metadata SET "
-            inserted_fields = []
-            for field in container_fields:
-                if field in data:
-                    inserted_fields.append(str(field) + " = '" + str(data[field]) + "'")
-                else:
-                    inserted_fields.append(str(field) + " = null")
-            query += " and " + " ,".join(inserted_fields)
-            query += " UPSERT WHERE container_uri = '" + str(data['container_uri']) + "'"
-            conn.command(query)
+        query = "UPDATE Metadata SET "
+        inserted_fields = []
+        for field in container_fields:
+            if field in data:
+                inserted_fields.append(str(field) + " = '" + str(data[field]) + "'")
+            else:
+                inserted_fields.append(str(field) + " = null")
+        query += " and " + " ,".join(inserted_fields)
+        query += " UPSERT WHERE container_uri = '" + str(data['container_uri']) + "'"
+        self.conn.command(query)
 
     # TODO: analyze, accounts/containers cannot be deleted unless empty
     #       so overwrite does not need to affect lower level hierarchies
@@ -298,31 +427,29 @@ class MetadataBroker(OrientDBBroker):
     def overwrite_object_md(self, data):
         """Data insertion methods for object data in metadata table,
         nulls all fields that are not updated"""
-        with self.get() as conn:
-            query = "UPDATE Metadata SET "
-            inserted_fields = []
-            for field in object_fields:
-                if field in data:
-                    inserted_fields.append(str(field) + " = '" + str(data[field]) + "'")
-                else:
-                    inserted_fields.append(str(field) + " = null")
-            query += " and " + " ,".join(inserted_fields)
-            query += " WHERE object_uri = '" + str(data['object_uri']) + "'"
-            conn.command(query)
+        query = "UPDATE Metadata SET "
+        inserted_fields = []
+        for field in object_fields:
+            if field in data:
+                inserted_fields.append(str(field) + " = '" + str(data[field]) + "'")
+            else:
+                inserted_fields.append(str(field) + " = null")
+        query += " and " + " ,".join(inserted_fields)
+        query += " WHERE object_uri = '" + str(data['object_uri']) + "'"
+        self.conn.command(query)
 
     def getAll(self):
         """
         Dump everything, used for debugging
         """
-        with self.get() as conn:
-            obj_data = [record.oRecordData for record in conn.query("SELECT FROM Metadata")]
+        obj_data = [record.oRecordData for record in self.conn.query("SELECT FROM Metadata")]
 
         return ''.join([
             json.dumps(obj_data), "\n\n", json.dumps(con_data), "\n\n",
             json.dumps(acc_data)
         ])
 
-    
+
     # TODO: handling duplicate and null data
     def get_attributes_query(self, acc, con, obj, attrs):
         """
@@ -343,7 +470,7 @@ class MetadataBroker(OrientDBBroker):
         # Catch bad query
         if attrsStartWith(attrs) == "BAD":
             return "BAD"
-        
+
         # Object Scope
         if obj != "" and obj is not None:
             Ouri = "'/" + acc + "/" + con + "/" + obj + "'"
@@ -356,8 +483,7 @@ class MetadataBroker(OrientDBBroker):
                 uri = Curi
             else:
                 uri = Auri
-            return """
-                SELECT %s,%s_uri
+            return """SELECT %s,%s_uri
                 FROM Metadata
                 WHERE %s_uri=%s
             """ % (attrs, domain, domain, domain, uri)
@@ -367,60 +493,45 @@ class MetadataBroker(OrientDBBroker):
             uri = "'/" + acc + "/" + con + "'"
             Auri = "'/" + acc + "'"
             if attrsStartWith(attrs) == 'object':
-                return """
-                    SELECT %s,object_uri
-                    FROM Metadata
-                    WHERE object_container_name=%s
-                """ % (attrs, "'" + con + "'")
+                return ("SELECT %s,object_uri "
+                    "FROM Metadata "
+                    "WHERE object_container_name=%s"
+                ) % (attrs, "'" + con + "'")
 
             elif attrsStartWith(attrs) == 'container':
-                return """
-                    SELECT %s,container_uri
-                    FROM Metadata
-                    WHERE container_uri=%s
-                """ % (attrs, fromStr, uri)
+                return ("SELECT %s,container_uri "
+                    "FROM Metadata "
+                    "WHERE container_uri=%s"
+                ) % (attrs, uri)
 
             elif attrsStartWith(attrs) == 'account':
-                return """
-                    SELECT %s,account_uri
-                    FROM Metadata
-                    WHERE account_uri=%s
-                """ % (attrs, fromStr, Auri)
+                return ("SELECT %s,account_uri "
+                    "FROM Metadata "
+                    "WHERE account_uri=%s"
+                ) % (attrs, Auri)
 
         # Account scope
         elif acc != "" and acc is not None:
             uri = "'/" + acc + "'"
             if attrsStartWith(attrs) == 'object':
-                return """
-                    SELECT %s,object_uri
-                    FROM Metadata
-                    WHERE object_account_name='%s'
-                """ % (attrs, fromStr, acc)
+                return ("SELECT %s,object_uri "
+                    "FROM Metadata "
+                    "WHERE object_account_name='%s'"
+                ) % (attrs, acc)
 
             elif attrsStartWith(attrs) == 'container':
-                return """
-                    SELECT %s,container_uri
-                    FROM Metadata
-                    WHERE container_account_name='%s'
-                """ % (attrs, fromStr, acc)
+                return ("SELECT %s,container_uri "
+                    "FROM Metadata "
+                    "WHERE container_account_name='%s'"
+                ) % (attrs, acc)
 
             elif attrsStartWith(attrs) == 'account':
-                return """
-                    SELECT %s,account_uri
-                    FROM Metadata
-                    WHERE account_uri=%s
-                """ % (attrs, fromStr, uri)
-    
-    # TODO: rewrite query using
-    """
-      select from Document
-      let $temp = (
-        SELECT
-        FROM Custom
-        WHERE custom_key=%s AND uri=%s
-      )
-      where $temp.size() > 0
-    """
+                return ("SELECT %s,account_uri "
+                    "FROM Metadata "
+                    "WHERE account_uri=%s"
+                ) % (attrs, uri)
+
+
     def get_uri_query(self, sql, queries):
         '''
         URI Query parser
@@ -434,17 +545,18 @@ class MetadataBroker(OrientDBBroker):
         queries = queries.translate(None,';%[]&')
         query = ""
         querysplit = queries.split(" ")
+        count = 1
         for i in querysplit:
             if (i.startswith("object_meta")
                         or i.startswith("container_meta")
                         or i.startswith("account_meta")):
                 first = i.split("_")[0]
                 key = "_".join(i.translate(maketrans("<>!=","____")).split("_")[:3])
-                # rewrite
-                i = """EXISTS (SELECT * FROM custom_metadata
-                        where uri == %s_uri AND custom_key='%s'
-                        AND custom_value%s)""" %\
-                        (first,key,i[len(key):])
+                # Append a new subquery variable after FROM section
+                sql = sql.replace("FROM Metadata","FROM Metadata let $temp" + count + "=(SELECT FROM Custom WHERE custom_key=" + first + " AND uri=" + key + " AND custom_value" + i[len(key):] + ") ")
+                # Add WHERE condition that subquery returns results
+                i = "$temp" + count + ".size() > 0"
+                count += 1
             query += " " + i
 
         return sql + " AND" + query
@@ -457,23 +569,22 @@ class MetadataBroker(OrientDBBroker):
         before this function is called. Only merges attributes in the
         customAttrs list passed in.
         """
-        with self.get() as conn:
-            for x in sysMetaList:
-                uri = x.keys()[0]
-                query = """SELECT custom_key, custom_value
-                FROM Custom
-                WHERE uri='%s'
-                """ % uri
-                l = conn.command(query)
-                for d in l:
-                    if (d['custom_key'] in customAttrs.split(',')) or \
-                        (all_obj_meta and
-                            d['custom_key'].startswith("object_meta")) or \
-                        (all_con_meta and
-                            d['custom_key'].startswith("container_meta")) or \
-                        (all_acc_meta and
-                            d['custom_key'].startswith("account_meta")):
-                                x[uri][d['custom_key']] = d['custom_value']
+        for x in sysMetaList:
+            uri = x.keys()[0]
+            query = """SELECT custom_key, custom_value
+            FROM Custom
+            WHERE uri='%s'
+            """ % uri
+            l = self.conn.query(query)
+            for d in l:
+                if (d['custom_key'] in customAttrs.split(',')) or \
+                    (all_obj_meta and
+                        d['custom_key'].startswith("object_meta")) or \
+                    (all_con_meta and
+                        d['custom_key'].startswith("container_meta")) or \
+                    (all_acc_meta and
+                        d['custom_key'].startswith("account_meta")):
+                            x[uri][d['custom_key']] = d['custom_value']
         return sysMetaList
 
     def execute_query(self, query, acc, con, obj, includeURI):
@@ -489,68 +600,52 @@ class MetadataBroker(OrientDBBroker):
         Each 'row' is now a dictionary in a list
         This list of dictonaries is returned
         """
-        with self.get() as conn:
-            queryList = cur.query(query)
-            retList = []
-            for row in queryList:
-                if not includeURI:
-                    try:
-                        uri = row['object_uri']
-                        retList.append({uri: row})
-                        del row['object_uri']
-                    except KeyError:
-                        pass
-                    try:
-                        uri = row['container_uri']
-                        retList.append({uri: row})
-                        del row['container_uri']
-                    except KeyError:
-                        pass
-                    try:
-                        uri = row['account_uri']
-                        retList.append({uri: row})
-                        del row['account_uri']
-                    except KeyError:
-                        pass
-                else:
-                    try:
-                        retList.append({row['object_uri']: row})
-                    except KeyError:
-                        pass
-                    try:
-                        retList.append({row['container_uri']: row})
-                    except KeyError:
-                        pass
-                    try:
-                        retList.append({row['account_uri']: row})
-                    except KeyError:
-                        pass
-            return retList
+        queryList = self.conn.query(query)
+        retList = []
+        for rowData in queryList:
+            row = rowData.oRecordData
+            if not includeURI:
+                try:
+                    uri = row['object_uri']
+                    retList.append({uri: row})
+                    del row['object_uri']
+                except KeyError:
+                    pass
+                try:
+                    uri = row['container_uri']
+                    retList.append({uri: row})
+                    del row['container_uri']
+                except KeyError:
+                    pass
+                try:
+                    uri = row['account_uri']
+                    retList.append({uri: row})
+                    del row['account_uri']
+                except KeyError:
+                    pass
+            else:
+                try:
+                    retList.append({row['object_uri']: row})
+                except KeyError:
+                    pass
+                try:
+                    retList.append({row['container_uri']: row})
+                except KeyError:
+                    pass
+                try:
+                    retList.append({row['account_uri']: row})
+                except KeyError:
+                    pass
+        return retList
 
-    def is_deleted(self, mdtable, timestamp=None):
-        '''
-        Determine whether a DB is considered deleted
-        :param mdtable: a string representing the relevant object type
-            (account, container, object)
-        :returns: True if the DB is considered deleted, False otherwise
-        '''
-        if self.db_file != ':memory:' and not os.path.exists(self.db_file):
-            return True
-        self._commit_puts_stale_ok()
-        return False
+    # TODO: Correct this to be match mariadb/server.py
+    def is_initialized(self):
+        row = self.conn.query("select from (select expand(classes) from metadata:schema) where name = 'Metadata'")
+        return len(row) != 0
 
     def empty(self):
-        """
-        Check if the Metadata DB is empty.
-
-        :returns: True if the database has no metadata.
-        """
-        self._commit_puts_stale_ok()
-        with self.get() as conn:
-            row = conn.execute(
-                'SELECT account_container_count from account_metadata'). \
-                fetchone()
-            return (row[0] == 0)
+        row = self.conn.query("select from (select expand(classes) from metadata:schema) where name = 'Metadata'")
+        return len(row) == 0
 
 
 def dict_factory(cursor, row):
