@@ -32,7 +32,7 @@ from swift.common.utils import get_logger, public, \
 from swift.common.constraints import check_utf8
 
 from swift.common.db_replicator import ReplicatorRpc
-,
+
 from swift.common.swob import HTTPBadRequest, HTTPConflict, \
     HTTPInternalServerError, HTTPNoContent, \
     HTTPPreconditionFailed, HTTPMethodNotAllowed, Request, Response, \
@@ -58,6 +58,11 @@ from swift.container.server import ContainerController
 from swift.common.utils import hash_path, storage_directory
 from swift.common.db import DatabaseConnectionError
 from swift.common.request_helpers import is_sys_or_user_meta
+
+#account related imports
+import swift.account.backend
+from swift.account.server import AccountController
+
 
 
 DATADIR = 'metadata'
@@ -437,11 +442,79 @@ class MetadataController(object):
                     pass
         return
 
-        @public
-        @timing_stats()
+    @public
+    @timing_stats()
     def DELETE(self, req):
         version, acc, con, obj = split_path(req.path, 1, 4, True)
         
+
+    @public
+    @timing_stats()
+    def POST(self, req):
+        version, acc, con, obj = split_path(req.path, 1, 4, True)
+        stor_policy = req.headers['storage_policy']
+        ring = POLICIES.get_object_ring(stor_policy, '/etc/swift')
+        if not con and not obj:
+            hsh = hash_path(acc)
+            part = ring.get_part(acc)
+            db_dir = storage_directory(swift.account.backend.DATADIR, part, hsh)
+            nodes = ring.get_part_nodes(part)
+            for node in nodes:
+                for item in self.devicelist:
+                    if node['device'] in item:
+                        path = os.path.join(self.root + item, db_dir, hsh + '.db')
+                        kwargs = {'account':acc, 'logger':self.logger}
+                        broker = swift.account.backend.AccountBroker(path, **kwargs)
+                        md = broker.get_info()
+                        md.update(
+                            (key, value)
+                            for key, (value, timestamp) in broker.metadata.iteritems()
+                            if value != '' and is_sys_or_user_meta('account', key))
+                        #md = format_acc_metadata(md)
+                        #overwrite md
+                        return
+
+        #Handle Container PUT
+        if not obj:
+            try:
+                hsh = hash_path(acc, con)
+                part = ring.get_part(acc, con)
+                db_dir = storage_directory(swift.container.backend.DATADIR, part, hsh)
+                nodes = ring.get_part_nodes(part)
+                for node in nodes:
+                    for item in self.devicelist:
+                        if node['device'] in item:
+                            path = os.path.join(self.root + item, db_dir, hsh + '.db')
+                            kwargs = {'account':acc, 'container':con, 'logger':self.logger}
+                            broker = swift.container.backend.ContainerBroker(path, **kwargs)
+                            md = broker.get_info()
+                            md.update(
+                                (key, value)
+                                for key, (value, timestamp) in broker.metadata.iteritems()
+                                if value != '' and is_sys_or_user_meta('container', key))
+                            #md = format_con_metadata(md)
+                            #overwrite md
+                            return
+            except DatabaseConnectionError as e:
+                self.logger.warn("DatabaseConnectionError: " + e.path + "\n")
+                pass
+            except:
+                self.logger.warn("Error: " + str(sys.exc_info()[0]) + "\n")
+                pass
+        else:
+            part = ring.get_part(acc, con, obj)
+            nodes = ring.get_part_nodes(part)
+            for node in nodes:
+                try:
+                    for item in self.devicelist:
+                        if node['device'] in item:
+                            df = self.diskfile_mgr.get_diskfile(item, part, acc, con, obj, stor_policy)
+                            md = df.read_metadata()
+                            #md = format_obj_metadata(md)
+                            #do a MD overwrite
+                except:
+                    self.logger.warn("Error: " + str(sys.exc_info()[0]) + "\n")
+                    pass
 
 
     def __call__(self, env, start_response):
