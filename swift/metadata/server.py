@@ -401,7 +401,6 @@ class MetadataController(object):
         ring = POLICIES.get_object_ring(stor_policy, '/etc/swift')
         #Handle Container PUT
         if not obj:
-            try:
                 hsh = hash_path(acc, con)
                 part = ring.get_part(acc, con)
                 db_dir = storage_directory(swift.container.backend.DATADIR, part, hsh)
@@ -409,37 +408,38 @@ class MetadataController(object):
                 for node in nodes:
                     for item in self.devicelist:
                         if node['device'] in item:
-                            path = os.path.join(self.root + item, db_dir, hsh + '.db')
-                            kwargs = {'account':acc, 'container':con, 'logger':self.logger}
-                            broker = swift.container.backend.ContainerBroker(path, **kwargs)
-                            md = broker.get_info()
-                            md.update(
-                                (key, value)
-                                for key, (value, timestamp) in broker.metadata.iteritems()
-                                if value != '' and is_sys_or_user_meta('container', key))
-                            #send md
-                            return
-            except DatabaseConnectionError as e:
-                self.logger.warn("DatabaseConnectionError: " + e.path + "\n")
-                pass
-            except:
-                self.logger.warn("Error: " + str(sys.exc_info()[0]) + "\n")
-                pass
+                            try:
+                                path = os.path.join(self.root + item, db_dir, hsh + '.db')
+                                kwargs = {'account':acc, 'container':con, 'logger':self.logger}
+                                broker = swift.container.backend.ContainerBroker(path, **kwargs)
+                                md = broker.get_info()
+                                md.update(
+                                    (key, value)
+                                    for key, (value, timestamp) in broker.metadata.iteritems()
+                                    if value != '' and is_sys_or_user_meta('container', key))
+                                #send md
+                                return
+                            except DatabaseConnectionError as e:
+                                self.logger.warn("DatabaseConnectionError: " + e.path + "\n")
+                                pass
+                            except:
+                                self.logger.warn("Error: " + str(sys.exc_info()[0]) + "\n")
+                                pass
         #handle object PUT
         else:
             part = ring.get_part(acc, con, obj)
             nodes = ring.get_part_nodes(part)
             for node in nodes:
-                try:
-                    for item in self.devicelist:
-                        if node['device'] in item:
+                for item in self.devicelist:
+                    if node['device'] in item:
+                        try:
                             df = self.diskfile_mgr.get_diskfile(item, part, acc, con, obj, stor_policy)
                             md = df.read_metadata()
                             #md = format_obj_metadata(md)
                             #send md
-                except:
-                    self.logger.warn("Error: " + str(sys.exc_info()[0]) + "\n")
-                    pass
+                        except:
+                            self.logger.warn("Error: " + str(sys.exc_info()[0]) + "\n")
+                            pass
         return
 
     @public
@@ -455,37 +455,44 @@ class MetadataController(object):
         stor_policy = req.headers['storage_policy']
         ring = POLICIES.get_object_ring(stor_policy, '/etc/swift')
         if not con and not obj:
+            meta_type = 'account'
+            kwargs = {'account':acc, 'logger':self.logger}
+            data_dir = swift.account.backend.DATADIR
             hsh = hash_path(acc)
             part = ring.get_part(acc)
-            db_dir = storage_directory(swift.account.backend.DATADIR, part, hsh)
+            db_dir = storage_directory(data_dir, part, hsh)
             nodes = ring.get_part_nodes(part)
             for node in nodes:
                 for item in self.devicelist:
                     if node['device'] in item:
-                        path = os.path.join(self.root + item, db_dir, hsh + '.db')
-                        kwargs = {'account':acc, 'logger':self.logger}
-                        broker = swift.account.backend.AccountBroker(path, **kwargs)
-                        md = broker.get_info()
-                        md.update(
-                            (key, value)
-                            for key, (value, timestamp) in broker.metadata.iteritems()
-                            if value != '' and is_sys_or_user_meta('account', key))
-                        #md = format_acc_metadata(md)
-                        #overwrite md
-                        return
-
+                        try:
+                            path = os.path.join(self.root + item, db_dir, hsh + '.db')
+                            broker = swift.account.backend.AccountBroker(path, **kwargs)
+                            md = broker.get_info()
+                            md.update(
+                                (key, value)
+                                for key, (value, timestamp) in broker.metadata.iteritems()
+                                if value != '' and is_sys_or_user_meta(meta_type, key))
+                            #md = format_acc_metadata(md)
+                            #overwrite md
+                            return
+                        except:
+                            self.logger.warn("Error: " + str(sys.exc_info()[0]) + "\n")
+                            pass
         #Handle Container PUT
         if not obj:
+            meta_type = 'container'
+            kwargs = {'account':acc, 'container':con, 'logger':self.logger}
+            data_dir = swift.container.backend.DATADIR
             try:
                 hsh = hash_path(acc, con)
                 part = ring.get_part(acc, con)
-                db_dir = storage_directory(swift.container.backend.DATADIR, part, hsh)
+                db_dir = storage_directory(data_dir, part, hsh)
                 nodes = ring.get_part_nodes(part)
                 for node in nodes:
                     for item in self.devicelist:
                         if node['device'] in item:
                             path = os.path.join(self.root + item, db_dir, hsh + '.db')
-                            kwargs = {'account':acc, 'container':con, 'logger':self.logger}
                             broker = swift.container.backend.ContainerBroker(path, **kwargs)
                             md = broker.get_info()
                             md.update(
@@ -515,6 +522,14 @@ class MetadataController(object):
                 except:
                     self.logger.warn("Error: " + str(sys.exc_info()[0]) + "\n")
                     pass
+        return
+
+
+    @public
+    @timing_stats()
+    def COPY(self, req):
+        version, acc, con, obj = split_path(req.path, 1, 4, True)
+        
 
 
     def __call__(self, env, start_response):
