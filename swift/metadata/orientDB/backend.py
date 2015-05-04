@@ -19,13 +19,11 @@ from swift.common.utils import normalize_timestamp
 from swift.common.utils import json
 import pyorient
 
+# TODO: go over all queries and look into using transactions
 # TODO: When server.py is cleaned up this can be removed
 BROKER_TIMEOUT = 25
 
-""" server.py creates MetadataBroker(OrientDBBroker) which calls __init__(),
-    server.py calls initialize() in OrientDBBroker,
-    initialize() calls _initialize() in MetadataBroker
-"""
+#TODO: merge orientdbbroker into metadata broker
 class OrientDBBroker(object):
     """
     Encapsulates working with an OrientDB database.
@@ -44,23 +42,20 @@ class OrientDBBroker(object):
         self.db_address = "127.0.0.1"
         self.timeout = timeout
 
-    # TODO: rename to connect(), check failure for db not exist and
-    # prevent further use in server.py
+    # TODO: cleanup server.py and remove timestamp param
     # TODO: Retrieve IP/user/pw of an orientdb node from configuration file
     def initialize(self, put_timestamp=None):
         """
-        Create the DB
-
-        :param put_timestamp: timestamp of initial PUT request
+        Connect to and/or create the DB
         """
         self.conn = pyorient.OrientDB("localhost", 2424)
         self.conn.connect("root","hpgroup")
         if not self.conn.db_exists("metadata", pyorient.STORAGE_TYPE_PLOCAL):
             self.conn.db_create( "metadata", pyorient.DB_TYPE_DOCUMENT, pyorient.STORAGE_TYPE_PLOCAL )
-            # Does this autoconnect? Does it block to create the DB?
-            self._initialize(self.conn, put_timestamp)
+            # TODO: Does this autoconnect? Does it block to create the DB?
+            self._initialize(self.conn)
         self.conn.db_open("metadata", "root", "hpgroup")
-
+    
 
 class MetadataBroker(OrientDBBroker):
     """
@@ -68,6 +63,8 @@ class MetadataBroker(OrientDBBroker):
     Three are for system metadata of account, container and object server.
     custom metadata are stored in key-value pair format in another table.
     """
+    # TODO: cleanup the class docstring
+    # TODO: cleanup the global variables
     type = 'metadata'
     db_contains_type = 'object'
     db_reclaim_timestamp = 'created_at'
@@ -132,12 +129,14 @@ class MetadataBroker(OrientDBBroker):
         "object_access_control_request_headers"
     ]
 
-    def _initialize(self, timestamp):
-        self.create_md_table(self.conn)
-        self.create_custom_md_table(self.conn)
+    def _initialize(self):
+        """ Initialize the tables of the database """
+        self.create_md_table()
+        self.create_custom_md_table()
 
-    def create_md_table(self, conn):
-        conn.batch("""
+    def create_md_table(self):
+        """ Issue a batch console command to create the metadata table """
+        self.conn.batch("""
             CREATE CLASS Metadata;
             CREATE PROPERTY Metadata.account_uri STRING;
             CREATE PROPERTY Metadata.account_name STRING;
@@ -196,7 +195,8 @@ class MetadataBroker(OrientDBBroker):
             CREATE PROPERTY Metadata.object_access_control_request_headers STRING;
         """)
 
-    def create_custom_md_table(self, conn):
+    def create_custom_md_table(self):
+        """ Issue a batch console command to create the metadata table """
         conn.batch("""
             CREATE CLASS Custom;
             CREATE PROPERTY Custom.uri STRING;
@@ -206,7 +206,7 @@ class MetadataBroker(OrientDBBroker):
             CREATE PROPERTY Custom.timestamp DATETIME;
         """)
 
-    def insert_custom_md(self, conn, uri, key, value):
+    def insert_custom_md(self, uri, key, value):
         """Data insertion method for custom metadata table"""
         query = '''
             UPDATE Custom SET
@@ -219,7 +219,7 @@ class MetadataBroker(OrientDBBroker):
         # Build and execute query for each requested insertion
         formatted_query = \
             query % (uri, key, value, normalize_timestamp(time.time()), uri)
-        conn.command(formatted_query)
+        self.conn.command(formatted_query)
 
     def insert_account_md(self, data):
         """Data insertion method for account metadata"""
@@ -449,8 +449,6 @@ class MetadataBroker(OrientDBBroker):
             json.dumps(acc_data)
         ])
 
-
-    # TODO: handling duplicate and null data
     def get_attributes_query(self, acc, con, obj, attrs):
         """
         This query starts off the query STRING by adding the Attributes
@@ -531,7 +529,6 @@ class MetadataBroker(OrientDBBroker):
                     "WHERE account_uri=%s"
                 ) % (attrs, uri)
 
-
     def get_uri_query(self, sql, queries):
         '''
         URI Query parser
@@ -557,6 +554,8 @@ class MetadataBroker(OrientDBBroker):
                 # Add WHERE condition that subquery returns results
                 i = "$temp" + count + ".size() > 0"
                 count += 1
+            # TODO: must add spaces around '<' and '>' or orientDB has
+            # formatting errors
             query += " " + i
 
         return sql + " AND" + query
@@ -587,6 +586,7 @@ class MetadataBroker(OrientDBBroker):
                             x[uri][d['custom_key']] = d['custom_value']
         return sysMetaList
 
+    # TODO: handling duplicate and null data
     def execute_query(self, query, acc, con, obj, includeURI):
         """
         Execute the main query.
