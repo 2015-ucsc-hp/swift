@@ -19,13 +19,11 @@ from swift.common.utils import normalize_timestamp
 from swift.common.utils import json
 import pyorient
 
+# TODO: go over all queries and look into using transactions
 # TODO: When server.py is cleaned up this can be removed
 BROKER_TIMEOUT = 25
 
-""" server.py creates MetadataBroker(OrientDBBroker) which calls __init__(),
-    server.py calls initialize() in OrientDBBroker,
-    initialize() calls _initialize() in MetadataBroker
-"""
+#TODO: merge orientdbbroker into metadata broker
 class OrientDBBroker(object):
     """
     Encapsulates working with an OrientDB database.
@@ -44,23 +42,20 @@ class OrientDBBroker(object):
         self.db_address = "127.0.0.1"
         self.timeout = timeout
 
-    # TODO: rename to connect(), check failure for db not exist and
-    # prevent further use in server.py
+    # TODO: cleanup server.py and remove timestamp param
     # TODO: Retrieve IP/user/pw of an orientdb node from configuration file
     def initialize(self, put_timestamp=None):
         """
-        Create the DB
-
-        :param put_timestamp: timestamp of initial PUT request
+        Connect to and/or create the DB
         """
         self.conn = pyorient.OrientDB("localhost", 2424)
         self.conn.connect("root","hpgroup")
         if not self.conn.db_exists("metadata", pyorient.STORAGE_TYPE_PLOCAL):
             self.conn.db_create( "metadata", pyorient.DB_TYPE_DOCUMENT, pyorient.STORAGE_TYPE_PLOCAL )
-            # Does this autoconnect? Does it block to create the DB?
-            self._initialize(self.conn, put_timestamp)
+            # TODO: Does this autoconnect? Does it block to create the DB?
+            self._initialize(self.conn)
         self.conn.db_open("metadata", "root", "hpgroup")
-
+    
 
 class MetadataBroker(OrientDBBroker):
     """
@@ -68,6 +63,8 @@ class MetadataBroker(OrientDBBroker):
     Three are for system metadata of account, container and object server.
     custom metadata are stored in key-value pair format in another table.
     """
+    # TODO: cleanup the class docstring
+    # TODO: cleanup the global variables
     type = 'metadata'
     db_contains_type = 'object'
     db_reclaim_timestamp = 'created_at'
@@ -132,12 +129,14 @@ class MetadataBroker(OrientDBBroker):
         "object_access_control_request_headers"
     ]
 
-    def _initialize(self, timestamp):
-        self.create_md_table(self.conn)
-        self.create_custom_md_table(self.conn)
+    def _initialize(self):
+        """ Initialize the tables of the database """
+        self.create_md_table()
+        self.create_custom_md_table()
 
-    def create_md_table(self, conn):
-        conn.batch("""
+    def create_md_table(self):
+        """ Issue a batch console command to create the metadata table """
+        self.conn.batch("""
             CREATE CLASS Metadata;
             CREATE PROPERTY Metadata.account_uri STRING;
             CREATE PROPERTY Metadata.account_name STRING;
@@ -196,7 +195,8 @@ class MetadataBroker(OrientDBBroker):
             CREATE PROPERTY Metadata.object_access_control_request_headers STRING;
         """)
 
-    def create_custom_md_table(self, conn):
+    def create_custom_md_table(self):
+        """ Issue a batch console command to create the metadata table """
         conn.batch("""
             CREATE CLASS Custom;
             CREATE PROPERTY Custom.uri STRING;
@@ -206,7 +206,7 @@ class MetadataBroker(OrientDBBroker):
             CREATE PROPERTY Custom.timestamp DATETIME;
         """)
 
-    def insert_custom_md(self, conn, uri, key, value):
+    def insert_custom_md(self, uri, key, value):
         """Data insertion method for custom metadata table"""
         query = '''
             UPDATE Custom SET
@@ -219,7 +219,7 @@ class MetadataBroker(OrientDBBroker):
         # Build and execute query for each requested insertion
         formatted_query = \
             query % (uri, key, value, normalize_timestamp(time.time()), uri)
-        conn.command(formatted_query)
+        self.conn.command(formatted_query)
 
     def insert_account_md(self, data):
         """Data insertion method for account metadata"""
@@ -256,10 +256,20 @@ class MetadataBroker(OrientDBBroker):
             )            
             self.conn.command(formatted_query)
 
-    # TODO: query for account metadata, and put into data for insert
     def insert_container_md(self, data):
         """Data insertion method for container metadata"""
         query = '''UPDATE Metadata SET 
+                account_uri = "%s",
+                account_name = "%s",
+                account_tenant_id = "%s", 
+                account_first_use_time = "%s", 
+                account_last_modified_time = "%s", 
+                account_last_changed_time = "%s", 
+                account_delete_time = "%s", 
+                account_last_activity_time = "%s", 
+                account_container_count = %s, 
+                account_object_count = %s, 
+                account_bytes_used = %s, 
                 container_uri = "%s",
                 container_name = "%s",
                 container_account_name = "%s",
@@ -280,7 +290,41 @@ class MetadataBroker(OrientDBBroker):
         '''
 
         for row in data:
+            # Query for account details for denormalized insertion
+            acc_query = '''SELECT 
+                    account_uri, 
+                    account_name, 
+                    account_tenant_id, 
+                    account_first_use_time, 
+                    account_last_modified_time, 
+                    account_last_changed_time, 
+                    account_delete_time, 
+                    account_last_activity_time, 
+                    account_container_count, 
+                    account_object_count, 
+                    account_bytes_used 
+                FROM Metadata 
+                WHERE 
+                    account_name = "%s"
+            ''' % (
+                row['container_account_name']
+            )
+            queryList = self.conn.query(acc_query)
+            # TODO: check for keyError
+            acc_data = queryList[0].oRecordData
+            
             formatted_query = query % (
+                acc_data['account_uri'],
+                acc_data['account_name'],
+                acc_data['account_tenant_id'],
+                acc_data['account_first_use_time'],
+                acc_data['account_last_modified_time'],
+                acc_data['account_last_changed_time'],
+                acc_data['account_delete_time'],
+                acc_data['account_last_activity_time'],
+                acc_data['account_container_count'],
+                acc_data['account_object_count'],
+                acc_data['account_bytes_used'],
                 row['container_uri'],
                 row['container_name'],
                 row['container_account_name'],
@@ -298,12 +342,39 @@ class MetadataBroker(OrientDBBroker):
                 row['container_bytes_used'],
                 row['container_uri']
             )
+            target = open("/home/hp/debug2", 'a')                                                                                                        
+            target.write(formatted_query) 
             self.conn.command(formatted_query)
 
-    # TODO: query for account,container metadata, and put into data for insert
     def insert_object_md(self, data):
         """Data insertion method for object metadata"""
         query = '''UPDATE Metadata SET
+                account_uri = "%s",
+                account_name = "%s",
+                account_tenant_id = "%s", 
+                account_first_use_time = "%s", 
+                account_last_modified_time = "%s", 
+                account_last_changed_time = "%s", 
+                account_delete_time = "%s", 
+                account_last_activity_time = "%s", 
+                account_container_count = %s, 
+                account_object_count = %s, 
+                account_bytes_used = %s, 
+                container_uri = "%s",
+                container_name = "%s",
+                container_account_name = "%s",
+                container_create_time = "%s",
+                container_last_modified_time = "%s",
+                container_last_changed_time = "%s",
+                container_delete_time = "%s",
+                container_last_activity_time = "%s",
+                container_read_permissions = "%s",
+                container_write_permissions = "%s",
+                container_sync_to = "%s",
+                container_sync_key = "%s",
+                container_versions_location = "%s",
+                container_object_count = %s,
+                container_bytes_used = %s,
                 object_uri = "%s",
                 object_name = "%s",
                 object_account_name = "%s",
@@ -322,7 +393,7 @@ class MetadataBroker(OrientDBBroker):
                 object_content_language = "%s",
                 object_cache_control = "%s",
                 object_delete_at = %s,
-                manifest_type = %s,
+                object_manifest_type = %s,
                 object_manifest = "%s",
                 object_access_control_allow_origin = "%s",
                 object_access_control_allow_credentials = "%s",
@@ -338,7 +409,74 @@ class MetadataBroker(OrientDBBroker):
         '''
 
         for row in data:
+            # Query for account details for denormalized insertion
+            acc_cont_query = '''SELECT 
+                    account_uri, 
+                    account_name, 
+                    account_tenant_id, 
+                    account_first_use_time, 
+                    account_last_modified_time, 
+                    account_last_changed_time, 
+                    account_delete_time, 
+                    account_last_activity_time, 
+                    account_container_count, 
+                    account_object_count, 
+                    account_bytes_used
+                    container_uri,
+                    container_name,
+                    container_account_name,
+                    container_create_time,
+                    container_last_modified_time,
+                    container_last_changed_time,
+                    container_delete_time,
+                    container_last_activity_time,
+                    container_read_permissions,
+                    container_write_permissions,
+                    container_sync_to,
+                    container_sync_key,
+                    container_versions_location,
+                    container_object_count,
+                    container_bytes_used
+                FROM Metadata 
+                WHERE 
+                    account_name = "%s"
+                AND
+                    container_name = "%s"
+            ''' % (
+                row['object_account_name'],
+                row['object_container_name']
+            )
+            queryList = self.conn.query(acc_cont_query)
+            # TODO: check for keyError
+            acc_cont_data = queryList[0].oRecordData
+            
             formatted_query = query % (
+                acc_cont_data['account_uri'],
+                acc_cont_data['account_name'],
+                acc_cont_data['account_tenant_id'],
+                acc_cont_data['account_first_use_time'],
+                acc_cont_data['account_last_modified_time'],
+                acc_cont_data['account_last_changed_time'],
+                acc_cont_data['account_delete_time'],
+                acc_cont_data['account_last_activity_time'],
+                acc_cont_data['account_container_count'],
+                acc_cont_data['account_object_count'],
+                acc_cont_data['account_bytes_used'],
+                acc_cont_data['container_uri'],
+                acc_cont_data['container_name'],
+                acc_cont_data['container_account_name'],
+                acc_cont_data['container_create_time'],
+                acc_cont_data['container_last_modified_time'],
+                acc_cont_data['container_last_changed_time'],
+                acc_cont_data['container_delete_time'],
+                acc_cont_data['container_last_activity_time'],
+                acc_cont_data['container_read_permissions'],
+                acc_cont_data['container_write_permissions'],
+                acc_cont_data['container_sync_to'],
+                acc_cont_data['container_sync_key'],
+                acc_cont_data['container_versions_location'],
+                acc_cont_data['container_object_count'],
+                acc_cont_data['container_bytes_used'],
                 row['object_uri'],
                 row['object_name'],
                 row['object_account_name'],
@@ -449,8 +587,6 @@ class MetadataBroker(OrientDBBroker):
             json.dumps(acc_data)
         ])
 
-
-    # TODO: handling duplicate and null data
     def get_attributes_query(self, acc, con, obj, attrs):
         """
         This query starts off the query STRING by adding the Attributes
@@ -531,7 +667,6 @@ class MetadataBroker(OrientDBBroker):
                     "WHERE account_uri=%s"
                 ) % (attrs, uri)
 
-
     def get_uri_query(self, sql, queries):
         '''
         URI Query parser
@@ -557,6 +692,8 @@ class MetadataBroker(OrientDBBroker):
                 # Add WHERE condition that subquery returns results
                 i = "$temp" + count + ".size() > 0"
                 count += 1
+            # TODO: must add spaces around '<' and '>' or orientDB has
+            # formatting errors
             query += " " + i
 
         return sql + " AND" + query
@@ -587,6 +724,7 @@ class MetadataBroker(OrientDBBroker):
                             x[uri][d['custom_key']] = d['custom_value']
         return sysMetaList
 
+    # TODO: handling duplicate and null data
     def execute_query(self, query, acc, con, obj, includeURI):
         """
         Execute the main query.
