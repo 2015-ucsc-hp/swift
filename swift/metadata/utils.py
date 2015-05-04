@@ -42,6 +42,152 @@ class Sender():
             except (Exception, Timeout):
                 return HTTP_INTERNAL_SERVER_ERROR
 
+def format_obj_metadata(self, data):
+        metadata = {}
+        uri = data['name'].split("/")
+        metadata['object_uri'] = data['name']
+        metadata['object_name'] = ("/".join(uri[3:]))
+        metadata['object_account_name'] = uri[1]
+        metadata['object_container_name'] = uri[2]
+        metadata['object_location'] = 'NULL'  # Not implemented yet
+        metadata['object_uri_create_time'] = \
+            data.setdefault('X-Timestamp', 'NULL')
+
+        metadata['object_last_modified_time'] = \
+            data.setdefault('X-Timestamp', 'NULL')
+
+        metadata['object_last_changed_time'] = 'NULL'
+
+        metadata['object_delete_time'] = 'NULL'
+
+        metadata['object_last_activity_time'] = \
+            data.setdefault('X-Timestamp', 'NULL')
+
+        metadata['object_etag_hash'] = \
+            data.setdefault('ETag', 'NULL')
+
+        metadata['object_content_type'] = \
+            data.setdefault('Content-Type', 'NULL')
+
+        metadata['object_content_length'] = \
+            data.setdefault('Content-Length', 'NULL')
+
+        metadata['object_content_encoding'] = \
+            data.setdefault('Content-Encoding', 'NULL')
+
+        metadata['object_content_disposition'] = \
+            data.setdefault('Content-Disposition', 'NULL')
+
+        metadata['object_content_language'] = \
+            data.setdefault('Content-Langauge', 'NULL')
+
+        metadata['object_cache_control'] = 'NULL' 
+
+        metadata['object_delete_at'] = \
+            data.setdefault('X-Delete-At', 'NULL')
+
+        metadata['object_manifest_type'] = 'NULL'
+        metadata['object_manifest'] = 'NULL'
+        metadata['object_access_control_allow_origin'] = 'NULL'
+        metadata['object_access_control_allow_credentials'] = 'NULL'
+        metadata['object_access_control_expose_headers'] = 'NULL'
+        metadata['object_access_control_max_age'] = 'NULL'
+        metadata['object_access_control_allow_methods'] = 'NULL'
+        metadata['object_access_control_allow_headers'] = 'NULL'
+        metadata['object_origin'] = 'NULL'
+        metadata['object_access_control_request_method'] = 'NULL'
+        metadata['object_access_control_request_headers'] = 'NULL'
+
+        #Insert all Object custom metadata
+        for custom in data:
+            if(custom.startswith("X-Object-Meta")):
+                sanitized_custom = custom[2:13].lower() + custom[13:]
+                sanitized_custom = sanitized_custom.replace('-', '_')
+                metadata[sanitized_custom] = data[custom]
+
+        return metadata
+
+def format_con_metadata(data):
+    metadata = {}
+    uri = "/" + data['account'] + "/" + data['container']
+    metadata['container_uri'] = uri
+    metadata['container_name'] = data['container']
+    metadata['container_account_name'] = data['account']
+    metadata['container_create_time'] = data.setdefault('created_at', 'NULL')
+    metadata['container_last_modified_time'] = \
+        data.setdefault('put_timestamp', 'NULL')
+
+    metadata['container_last_changed_time'] = \
+        data.setdefault('put_timestamp', 'NULL')
+
+    metadata['container_delete_time'] = \
+        data.setdefault('delete_timestamp', 'NULL')
+
+    metadata['container_last_activity_time'] = \
+        data.setdefault('put_timestamp', 'NULL')
+
+        #last_activity_time needs to be updated on meta server
+    metadata['container_read_permissions'] = 'NULL'  # Not Implemented yet
+    metadata['container_write_permissions'] = 'NULL'
+    metadata['container_sync_to'] = \
+        data.setdefault('x_container_sync_point1', 'NULL')
+
+    metadata['container_sync_key'] = \
+        data.setdefault('x_container_sync_point2', 'NULL')
+
+    metadata['container_versions_location'] = 'NULL'
+    metadata['container_object_count'] = \
+        data.setdefault('object_count', 'NULL')
+
+    metadata['container_bytes_used'] = \
+        data.setdefault('bytes_used', 'NULL')
+
+    metadata['container_delete_at'] = \
+        data.setdefault('delete_timestamp', 'NULL')
+
+    #Insert all Container custom metadata
+    for custom in data:
+        if(custom.startswith("X-Container-Meta")):
+            sanitized_custom = custom[2:16].lower() + custom[16:]
+            sanitized_custom = sanitized_custom.replace('-', '_')
+            metadata[sanitized_custom] = data[custom]
+    return metadata
+
+def format_acc_metadata(data):
+    metadata = {}
+    uri = "/" + data['account']
+    metadata['account_uri'] = uri
+    metadata['account_name'] = data['account']
+    metadata['account_tenant_id'] = data.setdefault('id', 'NULL')
+    metadata['account_first_use_time'] = data.setdefault('created_at', 'NULL')
+    metadata['account_last_modified_time'] = \
+        data.setdefault('put_timestamp', 'NULL')
+
+    metadata['account_last_changed_time'] =  \
+        data.setdefault('put_timestamp', 'NULL')
+
+    metadata['account_delete_time'] = \
+        data.setdefault('delete_timestamp', 'NULL')
+
+    metadata['account_last_activity_time'] = \
+        data.setdefault('put_timestamp', 'NULL')
+
+    metadata['account_container_count'] = \
+        data.setdefault('container_count', 'NULL')
+
+    metadata['account_object_count'] = \
+        data.setdefault('object_count', 'NULL')
+
+    metadata['account_bytes_used'] = data.setdefault('bytes_used', 'NULL')
+
+    #Insert all Account custom metadata
+    for custom in data:
+        if(custom.lower().startswith("x-account-meta")):
+            sanitized_custom = custom[2:14].lower() + custom[14:]
+            sanitized_custom = sanitized_custom.replace('-', '_')
+            metadata[sanitized_custom] = data[custom]
+    return metadata
+
 def output_xml(metaList):
     """
     Converts the list of dicts into XML format
