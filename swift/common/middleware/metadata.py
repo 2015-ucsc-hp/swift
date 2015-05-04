@@ -15,12 +15,14 @@
 
 from swift.common.swob import Request, Response
 from swift.common.utils import json
-from swift.proxy.controllers.base import get_container_info
+from swift.proxy.controllers.base import get_container_info, get_account_info
 from eventlet.green.httplib import HTTPConnection
 
 from swift.common.utils import split_path
 
 from swift.common.storage_policy import POLICIES
+
+from swift.obj.diskfile import DiskFileManager, DiskFileNotExist
 
 from swift.common.utils import get_logger
 
@@ -45,12 +47,18 @@ class MetaDataMiddleware(object):
             requestMethod = env['REQUEST_METHOD']
 
             if requestMethod == 'DELETE':
-                handler = self.DELETE
-                return handler(req)(env, start_response)
+                def delete_start_response(status, headers):
+                    if '204' in status:
+                        self.DELETE(env)
+                    return start_response(status, headers)
+                return self.app(env, delete_start_response)
 
             if requestMethod == 'POST':
-                handler = self.POST
-                return handler(req)(env, start_response)
+                def post_start_response(status, headers):
+                    if '204' in status:
+                        self.POST(env)
+                    return start_response(status, headers)
+                return self.app(env, post_start_response)
 
             if requestMethod == 'COPY':
                 handler = self.COPY
@@ -61,7 +69,7 @@ class MetaDataMiddleware(object):
             #and then send the request to the metadata server
             if requestMethod == 'PUT':
                 def put_start_response(status, headers):
-                    if '201' in status:
+                    if ('201' in status) or ('202' in status):
                         self.PUT(env)
                     return start_response(status, headers)
                 return self.app(env, put_start_response)
@@ -94,10 +102,13 @@ class MetaDataMiddleware(object):
         req = Request(env)
         conn = HTTPConnection('%s:%s' % (self.mds_ip, self.mds_port))
         headers = req.params
-        con_info = get_container_info(env,self.app)
-        stor_policy = con_info['storage_policy']
-        headers['storage_policy'] = stor_policy
-        #conn.request('PUT', env, self.app, headers=headers)
+        try:
+            info = get_container_info(env, self.app)
+            if info:
+                stor_policy = info['storage_policy']
+                headers['storage_policy'] = stor_policy
+        except:
+            pass
         conn.request('PUT', req.path, headers=headers)
         resp = conn.getresponse()
         return self.app

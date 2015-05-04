@@ -38,7 +38,7 @@ from swift.common.swob import HTTPBadRequest, HTTPConflict, \
     HTTPPreconditionFailed, HTTPMethodNotAllowed, Request, Response, \
     HTTPException
 
-from swift.metadata.utils import output_plain, output_json, output_xml, Sort_metadata
+from swift.metadata.utils import output_plain, output_json, output_xml, Sort_metadata, format_obj_metadata
 
 
 from swift.common.exceptions import DiskFileQuarantined, DiskFileNotExist, \
@@ -49,6 +49,15 @@ from swift.common.exceptions import DiskFileQuarantined, DiskFileNotExist, \
 from swift.proxy.controllers.base import get_container_info
 from swift.obj.diskfile import DiskFileManager, DiskFileNotExist
 from swift.common.storage_policy import POLICIES
+
+#container related imports
+import swift.container.backend
+from swift.container.server import ContainerController
+from swift.common.utils import hash_path, storage_directory
+
+from swift.common.db import DatabaseConnectionError
+from swift.common.request_helpers import is_sys_or_user_meta
+
 
 DATADIR = 'metadata'
 
@@ -160,7 +169,7 @@ class MetadataController(object):
             logger=self.logger
         )
         
-        self.df_mgr = DiskFileManager(conf,self.logger)
+        self.diskfile_mgr = DiskFileManager(conf,self.logger)
 
         if config_true_value(conf.get('allow_versions', 'f')):
             self.save_headers.append('x-versions-location')
@@ -381,26 +390,50 @@ class MetadataController(object):
     @public
     @timing_stats()
     def PUT(self, req):
-        version, acc, con, obj = split_path(req.path,1,4,True)
-        if not obj:
-            #deal with container or account request in this case
-            return
+        version, acc, con, obj = split_path(req.path, 1, 4, True)
         stor_policy = req.headers['storage_policy']
-        obj_ring = POLICIES.get_object_ring(stor_policy,'/etc/swift')
-        part = obj_ring.get_part(acc,con,obj)
-        nodes = obj_ring.get_part_nodes(part)
-        for node in nodes:
+        ring = POLICIES.get_object_ring(stor_policy, '/etc/swift')
+        #Handle Container PUT
+        if not obj:
             try:
-                for item in self.devicelist:
-                    if node['device'] in item:
-                        df = self.df_mgr.get_diskfile(item,part,acc,con,obj,stor_policy)
-                        md = df.read_metadata()
-                        for element in md:
-                            pass
-                            #gather md and pass to backend
+                hsh = hash_path(acc, con)
+                part = ring.get_part(acc, con)
+                db_dir = storage_directory(swift.container.backend.DATADIR, part, hsh)
+                nodes = ring.get_part_nodes(part)
+                for node in nodes:
+                    for item in self.devicelist:
+                        if node['device'] in item:
+                            path = os.path.join('/' + item, db_dir, hsh + '.db')
+                            kwargs = {'account':acc, 'container':con, 'logger':self.logger}
+                            broker = swift.container.backend.ContainerBroker(path, **kwargs)
+                            md = broker.get_info()
+                            md.update(
+                                (key, value)
+                                for key, (value, timestamp) in broker.metadata.iteritems()
+                                if value != '' and is_sys_or_user_meta('container', key))
+                            #send md
+                            return
+            except DatabaseConnectionError as e:
+                self.logger.warn("DatabaseConnectionError: " + e.path + "\n")
+                pass
             except:
                 self.logger.warn("Error: " + str(sys.exc_info()[0]) + "\n")
                 pass
+        #handle object PUT
+        else:
+            part = ring.get_part(acc, con, obj)
+            nodes = ring.get_part_nodes(part)
+            for node in nodes:
+                try:
+                    for item in self.devicelist:
+                        if node['device'] in item:
+                            df = self.diskfile_mgr.get_diskfile(item, part, acc, con, obj, stor_policy)
+                            md = df.read_metadata()
+                            #md = format_obj_metadata(md)
+                            #send md
+                except:
+                    self.logger.warn("Error: " + str(sys.exc_info()[0]) + "\n")
+                    pass
         return
 
         """
