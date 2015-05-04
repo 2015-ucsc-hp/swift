@@ -32,14 +32,16 @@ from swift.common.utils import get_logger, public, \
 from swift.common.constraints import check_utf8
 
 from swift.common.db_replicator import ReplicatorRpc
-
+,
 from swift.common.swob import HTTPBadRequest, HTTPConflict, \
     HTTPInternalServerError, HTTPNoContent, \
     HTTPPreconditionFailed, HTTPMethodNotAllowed, Request, Response, \
     HTTPException
 
-from swift.metadata.utils import output_plain, output_json, output_xml, Sort_metadata, format_obj_metadata
+from swift.metadata.utils import output_plain, output_json, output_xml, Sort_metadata, \
+    format_obj_metadata, format_con_metadata, format_acc_metadata
 
+from swift.common.constraints import valid_timestamp
 
 from swift.common.exceptions import DiskFileQuarantined, DiskFileNotExist, \
     DiskFileCollision, DiskFileNoSpace, DiskFileDeviceUnavailable, \
@@ -54,7 +56,6 @@ from swift.common.storage_policy import POLICIES
 import swift.container.backend
 from swift.container.server import ContainerController
 from swift.common.utils import hash_path, storage_directory
-
 from swift.common.db import DatabaseConnectionError
 from swift.common.request_helpers import is_sys_or_user_meta
 
@@ -403,7 +404,7 @@ class MetadataController(object):
                 for node in nodes:
                     for item in self.devicelist:
                         if node['device'] in item:
-                            path = os.path.join('/' + item, db_dir, hsh + '.db')
+                            path = os.path.join(self.root + item, db_dir, hsh + '.db')
                             kwargs = {'account':acc, 'container':con, 'logger':self.logger}
                             broker = swift.container.backend.ContainerBroker(path, **kwargs)
                             md = broker.get_info()
@@ -436,57 +437,12 @@ class MetadataController(object):
                     pass
         return
 
-        """
-        Handles incoming PUT requests
-        Crawlers running on the object/container/account servers
-        will send over new metadata. This is where that new metadata
-        is sent to the database
+        @public
+        @timing_stats()
+    def DELETE(self, req):
+        version, acc, con, obj = split_path(req.path, 1, 4, True)
         
-        broker = self._get_metadata_broker()
 
-        # Call broker insertion
-        if 'user-agent' not in req.headers:
-
-            return HTTPBadRequest(
-                body='No user agent specified',
-                request=req,
-                content_type='text/plain'
-            )
-        md_type = req.headers['user-agent']
-        md_data = json.loads(req.body)
-
-        if not os.path.exists(broker.db_file):
-            try:
-                broker.initialize(time.time())
-                # created = True
-            except DatabaseAlreadyExists:
-                # created = False
-                pass
-        else:
-            #created = broker.is_deleted(md_type)
-            # broker.update_put_timestamp(time.time())
-            if broker.is_deleted(md_type):
-                return HTTPConflict(request=req)
-
-        # check the user agent type
-        if md_type == 'account_crawler':
-            # insert accounts
-            broker.insert_account_md(md_data)
-        elif md_type == 'container_crawler':
-            # Insert containers
-            broker.insert_container_md(md_data)
-        elif md_type == 'object_crawler':
-            # Insert object
-            broker.insert_object_md(md_data)
-        else:
-            # raise exception
-            return HTTPBadRequest(
-                body='Invalid user agent',
-                request=req,
-                content_type='text/plain'
-            )
-        return HTTPNoContent(request=req)
-        """
 
     def __call__(self, env, start_response):
         """

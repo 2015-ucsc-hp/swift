@@ -61,13 +61,13 @@ class MetaDataMiddleware(object):
                 return self.app(env, post_start_response)
 
             if requestMethod == 'COPY':
-                handler = self.COPY
-                return handler(req)(env, start_response)
+                def copy_start_response(status, headers):
+                    if '201' in status:
+                        self.COPY(env)
+                    return start_response(status, headers)
+                return self.app(env, copy_start_response)
 
-            #Metadata for PUTs need to be handled on the
-            #outgoing end of the pipeline. We confirm write
-            #and then send the request to the metadata server
-            if requestMethod == 'PUT':
+            if requestMethod == 'PUT':                    
                 def put_start_response(status, headers):
                     if ('201' in status) or ('202' in status):
                         self.PUT(env)
