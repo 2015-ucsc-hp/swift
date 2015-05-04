@@ -42,7 +42,7 @@ class MariaDBBroker(object):
         
     # TODO: rename to connect(), check failure for db not exist and
     # prevent further use in server.py
-    # TODO: Retrieve IP of load balancer from configuration file
+    # TODO: Retrieve IP/user/pw of load balancer from configuration file
     def initialize(self):
         """
         Create and connect to the DB
