@@ -42,14 +42,15 @@ class Sender():
             except (Exception, Timeout):
                 return HTTP_INTERNAL_SERVER_ERROR
 
-def format_obj_metadata(self, data):
+def format_obj_metadata(data):
         metadata = {}
         uri = data['name'].split("/")
         metadata['object_uri'] = data['name']
         metadata['object_name'] = ("/".join(uri[3:]))
         metadata['object_account_name'] = uri[1]
         metadata['object_container_name'] = uri[2]
-        metadata['object_location'] = 'NULL'  # Not implemented yet
+        #Attribute added post-format in the PUT handler of the server
+        metadata['object_location'] = 'NULL'
         metadata['object_uri_create_time'] = \
             data.setdefault('X-Timestamp', 'NULL')
 
