@@ -49,7 +49,7 @@ from swift.common.exceptions import DiskFileQuarantined, DiskFileNotExist, \
     ReplicationLockTimeout, DiskFileExpired, DiskFileXattrNotSupported
 
 from swift.proxy.controllers.base import get_container_info
-from swift.obj.diskfile import DiskFileManager, DiskFileNotExist
+from swift.obj.diskfile import DiskFileManager, DiskFileNotExist, get_ondisk_files
 from swift.common.storage_policy import POLICIES
 
 #container related imports
@@ -394,7 +394,7 @@ class MetadataController(object):
             request=req, body=out + "\n", content_type=format, status=status)
 
     @public
-    @timing_stats()
+    #@timing_stats()
     def PUT(self, req):
         version, acc, con, obj = split_path(req.path, 1, 4, True)
         stor_policy = req.headers['storage_policy']
@@ -423,7 +423,7 @@ class MetadataController(object):
                                 self.logger.warn("DatabaseConnectionError: " + e.path + "\n")
                                 pass
                             except:
-                                self.logger.warn("Error: " + str(sys.exc_info()[0]) + "\n")
+                                self.logger.warn("%s: %s\n"%(str(sys.exc_info()[0]),str(sys.exc_info()[1])))
                                 pass
         #handle object PUT
         else:
@@ -434,11 +434,14 @@ class MetadataController(object):
                     if node['device'] in item:
                         try:
                             df = self.diskfile_mgr.get_diskfile(item, part, acc, con, obj, stor_policy)
+                            #Handle to DiskFile class acquired
+                            #OSMS Spec Asks for object_location
                             md = df.read_metadata()
-                            #md = format_obj_metadata(md)
+                            md = format_obj_metadata(md)
+                            md['object_location'] = df._data_file
                             #send md
                         except:
-                            self.logger.warn("Error: " + str(sys.exc_info()[0]) + "\n")
+                            self.logger.warn("%s: %s\n"%(str(sys.exc_info()[0]),str(sys.exc_info()[1])))
                             pass
         return
 
@@ -473,11 +476,11 @@ class MetadataController(object):
                                 (key, value)
                                 for key, (value, timestamp) in broker.metadata.iteritems()
                                 if value != '' and is_sys_or_user_meta(meta_type, key))
-                            #md = format_acc_metadata(md)
+                            md = format_acc_metadata(md)
                             #overwrite md
                             return
                         except:
-                            self.logger.warn("Error: " + str(sys.exc_info()[0]) + "\n")
+                            self.logger.warn("%s: %s\n"%(str(sys.exc_info()[0]),str(sys.exc_info()[1])))
                             pass
         #Handle Container PUT
         if not obj:
@@ -499,14 +502,14 @@ class MetadataController(object):
                                 (key, value)
                                 for key, (value, timestamp) in broker.metadata.iteritems()
                                 if value != '' and is_sys_or_user_meta('container', key))
-                            #md = format_con_metadata(md)
+                            md = format_con_metadata(md)
                             #overwrite md
                             return
             except DatabaseConnectionError as e:
                 self.logger.warn("DatabaseConnectionError: " + e.path + "\n")
                 pass
             except:
-                self.logger.warn("Error: " + str(sys.exc_info()[0]) + "\n")
+                self.logger.warn("%s: %s\n"%(str(sys.exc_info()[0]),str(sys.exc_info()[1])))
                 pass
         else:
             part = ring.get_part(acc, con, obj)
@@ -517,10 +520,10 @@ class MetadataController(object):
                         if node['device'] in item:
                             df = self.diskfile_mgr.get_diskfile(item, part, acc, con, obj, stor_policy)
                             md = df.read_metadata()
-                            #md = format_obj_metadata(md)
+                            md = format_obj_metadata(md)
                             #do a MD overwrite
                 except:
-                    self.logger.warn("Error: " + str(sys.exc_info()[0]) + "\n")
+                    self.logger.warn("%s: %s\n"%(str(sys.exc_info()[0]),str(sys.exc_info()[1])))
                     pass
         return
 
