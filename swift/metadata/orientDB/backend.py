@@ -342,8 +342,6 @@ class MetadataBroker(OrientDBBroker):
                 row['container_bytes_used'],
                 row['container_uri']
             )
-            target = open("/home/hp/debug2", 'a')                                                                                                        
-            target.write(formatted_query) 
             self.conn.command(formatted_query)
 
     def insert_object_md(self, data):
