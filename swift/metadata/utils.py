@@ -49,8 +49,10 @@ def format_obj_metadata(data):
         metadata['object_name'] = ("/".join(uri[3:]))
         metadata['object_account_name'] = uri[1]
         metadata['object_container_name'] = uri[2]
-        #Attribute added post-format in the PUT handler of the server
+
+        #object_location set in PUT after we return this metadata
         metadata['object_location'] = 'NULL'
+
         metadata['object_uri_create_time'] = \
             data.setdefault('X-Timestamp', 'NULL')
 
@@ -99,13 +101,6 @@ def format_obj_metadata(data):
         metadata['object_access_control_request_method'] = 'NULL'
         metadata['object_access_control_request_headers'] = 'NULL'
 
-        #Insert all Object custom metadata
-        for custom in data:
-            if(custom.startswith("X-Object-Meta")):
-                sanitized_custom = custom[2:13].lower() + custom[13:]
-                sanitized_custom = sanitized_custom.replace('-', '_')
-                metadata[sanitized_custom] = data[custom]
-
         return metadata
 
 def format_con_metadata(data):
@@ -124,12 +119,13 @@ def format_con_metadata(data):
     metadata['container_delete_time'] = \
         data.setdefault('delete_timestamp', 'NULL')
 
+    #last_activity_time inserted in PUT
     metadata['container_last_activity_time'] = \
         data.setdefault('put_timestamp', 'NULL')
-
-        #last_activity_time needs to be updated on meta server
+    
+    #container_read/write_permissions not acquireable in broker metadata query
     metadata['container_read_permissions'] = 'NULL'  # Not Implemented yet
-    metadata['container_write_permissions'] = 'NULL'
+    metadata['container_write_permissions'] = 'NULL' # Not Implemented yet
     metadata['container_sync_to'] = \
         data.setdefault('x_container_sync_point1', 'NULL')
 
@@ -146,12 +142,6 @@ def format_con_metadata(data):
     metadata['container_delete_at'] = \
         data.setdefault('delete_timestamp', 'NULL')
 
-    #Insert all Container custom metadata
-    for custom in data:
-        if(custom.startswith("X-Container-Meta")):
-            sanitized_custom = custom[2:16].lower() + custom[16:]
-            sanitized_custom = sanitized_custom.replace('-', '_')
-            metadata[sanitized_custom] = data[custom]
     return metadata
 
 def format_acc_metadata(data):
@@ -181,12 +171,16 @@ def format_acc_metadata(data):
 
     metadata['account_bytes_used'] = data.setdefault('bytes_used', 'NULL')
 
-    #Insert all Account custom metadata
+    return metadata
+
+def format_custom_metadata(data):
+    metadata = {}
     for custom in data:
-        if(custom.lower().startswith("x-account-meta")):
-            sanitized_custom = custom[2:14].lower() + custom[14:]
-            sanitized_custom = sanitized_custom.replace('-', '_')
-            metadata[sanitized_custom] = data[custom]
+        for item_type in ('account','container','object'):
+            if(custom.lower().startswith('x-'+item_type+'-meta')):
+                sanitized_custom = custom[2:14].lower() + custom[14:]
+                sanitized_custom = sanitized_custom.replace('-', '_')
+                metadata[sanitized_custom] = data[custom]
     return metadata
 
 def output_xml(metaList):
