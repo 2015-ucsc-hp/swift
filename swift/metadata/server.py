@@ -425,6 +425,13 @@ class MetadataController(object):
                                 (key, value)
                                 for key, (value, timestamp) in broker.metadata.iteritems()
                                 if value != '' and is_sys_or_user_meta('container', key))
+                            sys_md = format_container_metadata(md)
+                            user_md = format_custom_metadata(md)
+                            if 'X-Container-Read' in req.headers:
+                                sys_md['container_read_permissions'] = req.headers['X-Container-Read']
+                            if 'X-Container-Write' in req.headers:
+                                sys_md['container_write_permissions'] = req.headers['X-Container-Write']
+                            #TODO: insert container_last_activity_time
                             #TODO: split meta user/sys
                             #TODO: insert meta
                             return
@@ -443,12 +450,11 @@ class MetadataController(object):
                     if node['device'] in item:
                         try:
                             df = self.diskfile_mgr.get_diskfile(item, part, acc, con, obj, stor_policy)
-                            #OSMS Spec Asks for object_location
                             md = df.read_metadata()
-                            md = format_obj_metadata(md)
+                            sys_md = format_obj_metadata(md)
                             #df._data_file is a direct path to the objects data
-                            md['object_location'] = df._data_file
-                            #TODO: split user/sys meta
+                            sys_md['object_location'] = df._data_file
+                            user_md = format_custom_metadata(md)
                             #TODO: insert user meta and sys meta
                         except:
                             self.logger.warn("%s: %s\n"%(str(sys.exc_info()[0]),str(sys.exc_info()[1])))
@@ -467,9 +473,10 @@ class MetadataController(object):
         elif not obj:
             md = build_con_metadata(md)
             md['container_delete_time'] = timestamp
+            md['container_last_activity_time'] = timestamp
             data_type = 'container'
             for item in \
-                (data_type + '_uri', data_type + '_name', 'last_activity_time'):
+                (data_type + '_uri', data_type + '_name'):
                 if item in md:
                     del md[item]
             #TODO: overwrite container metadata
@@ -477,9 +484,10 @@ class MetadataController(object):
         else:
             md = build_obj_metadata(md)
             md['object_delete_time'] = timestamp
+            md['object_last_activity_time'] = timestamp
             data_type = 'object'
             for item in \
-                (data_type + '_uri', data_type + '_name', 'last_activity_time'):
+                (data_type + '_uri', data_type + '_name'):
                 if item in md:
                     del md[item]
             #TODO: overwrite object metadata
@@ -514,15 +522,15 @@ class MetadataController(object):
                                 (key, value)
                                 for key, (value, timestamp) in broker.metadata.iteritems()
                                 if value != '' and is_sys_or_user_meta(meta_type, key))
-                            md = format_acc_metadata(md)
-                            #TODO: split sys vs user metadata
+                            sys_md = format_acc_metadata(md)
+                            user_md = format_custom_metadata(md)
                             #TODO: call overwrite_account_metadata
                             #TODO: call overwrite_custom_metadata
                             return
                         except:
                             self.logger.warn("%s: %s\n"%(str(sys.exc_info()[0]),str(sys.exc_info()[1])))
                             pass
-        #Handle Container PUT
+        #Handle Container POST
         elif not obj:
             meta_type = 'container'
             kwargs = {'account':acc, 'container':con, 'logger':self.logger}
@@ -535,6 +543,7 @@ class MetadataController(object):
                 for node in nodes:
                     for item in self.devicelist:
                         if node['device'] in item:
+                            try:
                             path = os.path.join(self.root + item, db_dir, hsh + '.db')
                             broker = swift.container.backend.ContainerBroker(path, **kwargs)
                             md = broker.get_info()
@@ -542,8 +551,12 @@ class MetadataController(object):
                                 (key, value)
                                 for key, (value, timestamp) in broker.metadata.iteritems()
                                 if value != '' and is_sys_or_user_meta('container', key))
-                            md = format_con_metadata(md)
-                            #TODO: split sys vs user metadata
+                            sys_md = format_con_metadata(md)
+                            user_md = format_custom_metadata(md)
+                            if 'X-Container-Read' in req.headers:
+                                sys_md['container_read_permissions'] = req.headers['X-Container-Read']
+                            if 'X-Container-Write' in req.headers:
+                                sys_md['container_write_permissions'] = req.headers['X-Container-Write']
                             #TODO: call overwrite_container_metadata
                             #TODO: call overwrite_custom_metadata
                             return
@@ -557,18 +570,18 @@ class MetadataController(object):
             part = ring.get_part(acc, con, obj)
             nodes = ring.get_part_nodes(part)
             for node in nodes:
-                try:
-                    for item in self.devicelist:
-                        if node['device'] in item:
+                for item in self.devicelist:
+                    if node['device'] in item:
+                        try:
                             df = self.diskfile_mgr.get_diskfile(item, part, acc, con, obj, stor_policy)
                             md = df.read_metadata()
-                            md = format_obj_metadata(md)
-                            #TODO: split sys vs user metadata
+                            sys_md = format_obj_metadata(md)
+                            user_md = format_custom_metadata(md)
                             #TODO: call overwrite_object_metadata
                             #TODO: call overwrite_custom_metadata
-                except:
-                    self.logger.warn("%s: %s\n"%(str(sys.exc_info()[0]),str(sys.exc_info()[1])))
-                    pass
+                        except:
+                            self.logger.warn("%s: %s\n"%(str(sys.exc_info()[0]),str(sys.exc_info()[1])))
+                            pass
         return
 
 
