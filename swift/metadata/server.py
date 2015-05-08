@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import os
+import sys
 import time
 import traceback
 from swift import gettext_ as _
@@ -26,7 +27,7 @@ from swift.common.db import DatabaseAlreadyExists
 
 from swift.common.utils import get_logger, public, \
     config_true_value, json, timing_stats, \
-    split_path
+    split_path, Timestamp
 
 from swift.common.constraints import check_utf8
 
@@ -37,7 +38,37 @@ from swift.common.swob import HTTPBadRequest, HTTPConflict, \
     HTTPPreconditionFailed, HTTPMethodNotAllowed, Request, Response, \
     HTTPException
 
-from swift.metadata.utils import output_plain, output_json, output_xml, Sort_metadata
+from swift.metadata.utils import output_plain, output_json, output_xml, Sort_metadata, \
+    format_obj_metadata, format_con_metadata, format_acc_metadata
+
+from swift.common.constraints import valid_timestamp
+
+from swift.common.exceptions import DiskFileQuarantined, DiskFileNotExist, \
+    DiskFileCollision, DiskFileNoSpace, DiskFileDeviceUnavailable, \
+    DiskFileDeleted, DiskFileError, DiskFileNotOpen, PathNotDir, \
+    ReplicationLockTimeout, DiskFileExpired, DiskFileXattrNotSupported
+
+from swift.proxy.controllers.base import get_container_info
+from swift.obj.diskfile import DiskFileManager, DiskFileNotExist, get_ondisk_files
+from swift.common.storage_policy import POLICIES
+
+#container related imports
+import swift.container.backend
+from swift.container.server import ContainerController
+from swift.common.utils import hash_path, storage_directory
+from swift.common.db import DatabaseConnectionError
+from swift.common.request_helpers import is_sys_or_user_meta
+
+#account related imports
+import swift.account.backend
+from swift.account.server import AccountController
+
+
+#delete imports
+from swift.common.constraints import valid_timestamp
+
+#MD broker
+#from swift.metadata.backend import MetadataBroker
 
 DATADIR = 'metadata'
 
@@ -124,6 +155,11 @@ class MetadataController(object):
         self.db_file = os.path.join(self.location, 'meta.db')
         self.logger = logger or get_logger(conf, log_route='metadata-server')
         self.root = conf.get('devices', '/srv/node')
+        #workaround for device listings
+        self.node_count = conf.get('nodecount','8')
+        self.devicelist = []
+        for x in range(0,int(self.node_count)):
+            self.devicelist.append(conf.get('device'+str(x),''))
         self.mount_check = config_true_value(conf.get('mount_check', 'true'))
         self.node_timeout = int(conf.get('node_timeout', 3))
         self.conn_timeout = float(conf.get('node_timeout', 3))
@@ -143,6 +179,8 @@ class MetadataController(object):
             self.mount_check,
             logger=self.logger
         )
+        
+        self.diskfile_mgr = DiskFileManager(conf,self.logger)
 
         if config_true_value(conf.get('allow_versions', 'f')):
             self.save_headers.append('x-versions-location')
@@ -253,11 +291,7 @@ class MetadataController(object):
         Custom attributes need to be handled specially, since they exist
         in a seperate table
         """
-        target = open("/home/hp/debug2", 'a')                                                                                                        
-        target.write(" server.py GET call begins \n") 
-
         broker = self._get_metadata_broker()
-        broker.initialize()
 
         base_version, acc, con, obj = split_path(req.path, 1, 4, True)
         if 'sorted' in req.headers:
@@ -365,53 +399,198 @@ class MetadataController(object):
             request=req, body=out + "\n", content_type=format, status=status)
 
     @public
-    @timing_stats()
+    #@timing_stats()
+    #TODO: reorganize code to generalize repeated calls
+    #TODO: abstract data/object type names for generic calls
     def PUT(self, req):
-        """
-        Handles incoming PUT requests
-        Crawlers running on the object/container/account servers
-        will send over new metadata. This is where that new metadata
-        is sent to the database
-        """
-        broker = self._get_metadata_broker()
-
-        # Call broker insertion
-        if 'user-agent' not in req.headers:
-
-            return HTTPBadRequest(
-                body='No user agent specified',
-                request=req,
-                content_type='text/plain'
-            )
-        md_type = req.headers['user-agent']
-        md_data = json.loads(req.body)
-
-        # This can fail if db metadata does not exist, catch and make db
-        broker.initialize()
-        
-        # Check if tables exist, if not, create them
-        if not broker.is_initialized():
-            # This can fail if tables already exist
-            broker._initialize(time.time())
-
-        # check the user agent type
-        if md_type == 'account_crawler':
-            # insert accounts
-            broker.insert_account_md(md_data)
-        elif md_type == 'container_crawler':
-            # Insert containers
-            broker.insert_container_md(md_data)
-        elif md_type == 'object_crawler':
-            # Insert object
-            broker.insert_object_md(md_data)
+        version, acc, con, obj = split_path(req.path, 1, 4, True)
+        stor_policy = req.headers['storage_policy']
+        ring = POLICIES.get_object_ring(stor_policy, '/etc/swift')
+        #Handle Container PUT
+        if not obj:
+            hsh = hash_path(acc, con)
+            part = ring.get_part(acc, con)
+            db_dir = storage_directory(swift.container.backend.DATADIR, part, hsh)
+            nodes = ring.get_part_nodes(part)
+            for node in nodes:
+                for item in self.devicelist:
+                    if node['device'] in item:
+                        try:
+                            path = os.path.join(self.root + item, db_dir, hsh + '.db')
+                            #TODO: move kwargs
+                            kwargs = {'account':acc, 'container':con, 'logger':self.logger}
+                            broker = swift.container.backend.ContainerBroker(path, **kwargs)
+                            md = broker.get_info()
+                            md.update(
+                                (key, value)
+                                for key, (value, timestamp) in broker.metadata.iteritems()
+                                if value != '' and is_sys_or_user_meta('container', key))
+                            sys_md = format_container_metadata(md)
+                            user_md = format_custom_metadata(md)
+                            if 'X-Container-Read' in req.headers:
+                                sys_md['container_read_permissions'] = req.headers['X-Container-Read']
+                            if 'X-Container-Write' in req.headers:
+                                sys_md['container_write_permissions'] = req.headers['X-Container-Write']
+                            #TODO: insert container_last_activity_time
+                            #TODO: split meta user/sys
+                            #TODO: insert meta
+                            return
+                        except DatabaseConnectionError as e:
+                            self.logger.warn("DatabaseConnectionError: " + e.path + "\n")
+                            pass
+                        except:
+                            self.logger.warn("%s: %s\n"%(str(sys.exc_info()[0]),str(sys.exc_info()[1])))
+                            pass
+        #handle object PUT
         else:
-            # raise exception
-            return HTTPBadRequest(
-                body='Invalid user agent',
-                request=req,
-                content_type='text/plain'
-            )
-        return HTTPNoContent(request=req)
+            part = ring.get_part(acc, con, obj)
+            nodes = ring.get_part_nodes(part)
+            for node in nodes:
+                for item in self.devicelist:
+                    if node['device'] in item:
+                        try:
+                            df = self.diskfile_mgr.get_diskfile(item, part, acc, con, obj, stor_policy)
+                            md = df.read_metadata()
+                            sys_md = format_obj_metadata(md)
+                            #df._data_file is a direct path to the objects data
+                            sys_md['object_location'] = df._data_file
+                            user_md = format_custom_metadata(md)
+                            #TODO: insert user meta and sys meta
+                        except:
+                            self.logger.warn("%s: %s\n"%(str(sys.exc_info()[0]),str(sys.exc_info()[1])))
+                            pass
+        return
+
+    @public
+    @timing_stats()
+    def DELETE(self, req):
+        version, acc, con, obj = split_path(req.path, 1, 4, True)
+        timestamp = Timestamp(time.time()).isoformat()
+        data_type = ''
+        if not con and not obj:
+            #do nothing. accounts cannot be deleted
+            return
+        elif not obj:
+            md = build_con_metadata(md)
+            md['container_delete_time'] = timestamp
+            md['container_last_activity_time'] = timestamp
+            data_type = 'container'
+            for item in \
+                (data_type + '_uri', data_type + '_name'):
+                if item in md:
+                    del md[item]
+            #TODO: overwrite container metadata
+            #TODO: delete container custom metadata
+        else:
+            md = build_obj_metadata(md)
+            md['object_delete_time'] = timestamp
+            md['object_last_activity_time'] = timestamp
+            data_type = 'object'
+            for item in \
+                (data_type + '_uri', data_type + '_name'):
+                if item in md:
+                    del md[item]
+            #TODO: overwrite object metadata
+            #TODO: delete object user meta
+        return
+        
+            
+            
+    #TODO: generalize strings used for repeat calls
+    @public
+    #@timing_stats()
+    def POST(self, req):
+        version, acc, con, obj = split_path(req.path, 1, 4, True)
+        stor_policy = req.headers['storage_policy']
+        ring = POLICIES.get_object_ring(stor_policy, '/etc/swift')
+        if not con and not obj:
+            meta_type = 'account'
+            kwargs = {'account':acc, 'logger':self.logger}
+            data_dir = swift.account.backend.DATADIR
+            hsh = hash_path(acc)
+            part = ring.get_part(acc)
+            db_dir = storage_directory(data_dir, part, hsh)
+            nodes = ring.get_part_nodes(part)
+            for node in nodes:
+                for item in self.devicelist:
+                    if node['device'] in item:
+                        try:
+                            path = os.path.join(self.root + item, db_dir, hsh + '.db')
+                            broker = swift.account.backend.AccountBroker(path, **kwargs)
+                            md = broker.get_info()
+                            md.update(
+                                (key, value)
+                                for key, (value, timestamp) in broker.metadata.iteritems()
+                                if value != '' and is_sys_or_user_meta(meta_type, key))
+                            sys_md = format_acc_metadata(md)
+                            user_md = format_custom_metadata(md)
+                            #TODO: call overwrite_account_metadata
+                            #TODO: call overwrite_custom_metadata
+                            return
+                        except:
+                            self.logger.warn("%s: %s\n"%(str(sys.exc_info()[0]),str(sys.exc_info()[1])))
+                            pass
+        #Handle Container POST
+        elif not obj:
+            meta_type = 'container'
+            kwargs = {'account':acc, 'container':con, 'logger':self.logger}
+            data_dir = swift.container.backend.DATADIR
+            try:
+                hsh = hash_path(acc, con)
+                part = ring.get_part(acc, con)
+                db_dir = storage_directory(data_dir, part, hsh)
+                nodes = ring.get_part_nodes(part)
+                for node in nodes:
+                    for item in self.devicelist:
+                        if node['device'] in item:
+                            try:
+                            path = os.path.join(self.root + item, db_dir, hsh + '.db')
+                            broker = swift.container.backend.ContainerBroker(path, **kwargs)
+                            md = broker.get_info()
+                            md.update(
+                                (key, value)
+                                for key, (value, timestamp) in broker.metadata.iteritems()
+                                if value != '' and is_sys_or_user_meta('container', key))
+                            sys_md = format_con_metadata(md)
+                            user_md = format_custom_metadata(md)
+                            if 'X-Container-Read' in req.headers:
+                                sys_md['container_read_permissions'] = req.headers['X-Container-Read']
+                            if 'X-Container-Write' in req.headers:
+                                sys_md['container_write_permissions'] = req.headers['X-Container-Write']
+                            #TODO: call overwrite_container_metadata
+                            #TODO: call overwrite_custom_metadata
+                            return
+            except DatabaseConnectionError as e:
+                self.logger.warn("DatabaseConnectionError: " + e.path + "\n")
+                pass
+            except:
+                self.logger.warn("%s: %s\n"%(str(sys.exc_info()[0]),str(sys.exc_info()[1])))
+                pass
+        else:
+            part = ring.get_part(acc, con, obj)
+            nodes = ring.get_part_nodes(part)
+            for node in nodes:
+                for item in self.devicelist:
+                    if node['device'] in item:
+                        try:
+                            df = self.diskfile_mgr.get_diskfile(item, part, acc, con, obj, stor_policy)
+                            md = df.read_metadata()
+                            sys_md = format_obj_metadata(md)
+                            user_md = format_custom_metadata(md)
+                            #TODO: call overwrite_object_metadata
+                            #TODO: call overwrite_custom_metadata
+                        except:
+                            self.logger.warn("%s: %s\n"%(str(sys.exc_info()[0]),str(sys.exc_info()[1])))
+                            pass
+        return
+
+
+    @public
+    @timing_stats()
+    def COPY(self, req):
+        version, acc, con, obj = split_path(req.path, 1, 4, True)
+        
+
 
     def __call__(self, env, start_response):
         """
@@ -419,6 +598,7 @@ class MetadataController(object):
         upon receiving a request.
         Taken directly from other servers.
         """
+        # start_time = time.time()
         req = Request(env)
         self.logger.txn_id = req.headers.get('x-trans-id', None)
         if not check_utf8(req.path_info):
@@ -444,7 +624,21 @@ class MetadataController(object):
                     'ERROR __call__ error with %(method)s %(path)s '),
                     {'method': req.method, 'path': req.path})
                 res = HTTPInternalServerError(body=traceback.format_exc())
-
+        # trans_time = '%.4f' % (time.time() - start_time)
+        # if self.log_requests:
+        #     log_message = '%s - - [%s] "%s %s" %s %s "%s" "%s" "%s" %s' % (
+        #         req.remote_addr,
+        #         time.strftime('%d/%b/%Y:%H:%M:%S +0000',
+        #                       time.gmtime()),
+        #         req.method, req.path,
+        #         res.status.split()[0], res.content_length or '-',
+        #         req.headers.get('x-trans-id', '-'),
+        #         req.referer or '-', req.user_agent or '-',
+        #         trans_time)
+        #     if req.method.upper() == 'REPLICATE':
+        #         self.logger.debug(log_message)
+        #     else:
+        #         self.logger.info(log_message)
         return res(env, start_response)
 
 
