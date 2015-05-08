@@ -130,6 +130,7 @@ determine the repository and the version.
 
 	SWIFT_REPO 		\\repository ie git://github.com/openstack/swift
 	SWIFT_VERSION	\\swift version ie 1.12.0
+
 The Swift version can also be the name of a branch in the repository, ie `master`.
 
 ```shell
