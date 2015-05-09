@@ -625,6 +625,7 @@ class MetadataBroker(OrientDBBroker):
         query += " UPSERT WHERE account_uri = '" + str(data['account_uri']) + "'"
         self.conn.command(query)
 
+    # TODO: check for parent account changes
     def overwrite_container_md(self, data):
         """Data overwrite method for container data in metadata table,
         nulls all fields that are not updated"""
@@ -639,6 +640,7 @@ class MetadataBroker(OrientDBBroker):
         query += " UPSERT WHERE container_uri = '" + str(data['container_uri']) + "'"
         self.conn.command(query)
 
+    # TODO: check for parent account or container changes
     def overwrite_object_md(self, data):
         """Data insertion methods for object data in metadata table,
         nulls all fields that are not updated"""
@@ -858,19 +860,12 @@ class MetadataBroker(OrientDBBroker):
         row = self.conn.query("select from (select expand(classes) from metadata:schema) where name = 'Metadata'")
         return len(row) != 0
 
-    def empty(self):
-        row = self.conn.query("select from (select expand(classes) from metadata:schema) where name = 'Metadata'")
-        return len(row) == 0
-
-
 def dict_factory(cursor, row):
     """Converts query return into a dictionary"""
     d = {}
     for idx, col in enumerate(cursor.description):
         d[col[0]] = row[idx]
     return d
-
-
 
 def attachURI(metaDict, acc, con, obj):
     """Add URI to dict as `label`"""
@@ -881,8 +876,6 @@ def attachURI(metaDict, acc, con, obj):
     else:
         uri = '/' + acc
     return {uri: metaDict}
-
-
 
 def attrsStartWith(attrs):
     """
