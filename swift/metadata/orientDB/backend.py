@@ -49,6 +49,7 @@ class OrientDBBroker(object):
             # the database will try to insert inconsistent data (containers without account or objects
             # without containers)
             time.sleep(20)
+        if not self.is_initialized():
             self._initialize()
         self.conn.db_open("metadata", "root", "hpgroup")
     
