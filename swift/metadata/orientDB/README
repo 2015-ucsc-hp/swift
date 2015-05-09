@@ -21,6 +21,10 @@ Run the following commands on >=3 nodes:
    git clone https://github.com/orientechnologies/orientdb.git
    cd orientdb
    ant clean install
+
+On the swift node be sure to install the python orient-db drivers
+
+	sudo pip install pyorient
    
    
 
