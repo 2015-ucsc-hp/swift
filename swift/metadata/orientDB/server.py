@@ -117,6 +117,7 @@ class MetadataController(object):
         'x-metadata-sync-to'
     ]
 
+    # TODO: cleanup params for metadata broker that are no longer used
     def __init__(self, conf, logger=None):
         # location/directory of the metadata database (meta.db)
         self.location = conf.get('location', '/srv/node/sdb1/metadata/')
@@ -154,8 +155,7 @@ class MetadataController(object):
         """
         Returns an instance of the DB abstraction layer object (broker)
         """
-        kwargs.setdefault('db_file', self.db_file)
-        return MetadataBroker(**kwargs)
+        return MetadataBroker()
 
     def check_attrs(self, attrs, acc, con, obj):
         """
@@ -253,9 +253,7 @@ class MetadataController(object):
         Custom attributes need to be handled specially, since they exist
         in a seperate table
         """
-        target = open("/home/hp/debug2", 'a')                                                                                                        
-        target.write(" server.py GET call begins \n") 
-
+        # Connect to DB and build it if necessary
         broker = self._get_metadata_broker()
         broker.initialize()
 
@@ -373,8 +371,6 @@ class MetadataController(object):
         will send over new metadata. This is where that new metadata
         is sent to the database
         """
-        broker = self._get_metadata_broker()
-
         # Call broker insertion
         if 'user-agent' not in req.headers:
 
@@ -386,13 +382,9 @@ class MetadataController(object):
         md_type = req.headers['user-agent']
         md_data = json.loads(req.body)
 
-        # This can fail if db metadata does not exist, catch and make db
+        # Connect to DB and build it if necessary
+        broker = self._get_metadata_broker()
         broker.initialize()
-        
-        # Check if tables exist, if not, create them
-        if not broker.is_initialized():
-            # This can fail if tables already exist
-            broker._initialize(time.time())
 
         # check the user agent type
         if md_type == 'account_crawler':
