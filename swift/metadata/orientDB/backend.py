@@ -785,7 +785,6 @@ class MetadataBroker(OrientDBBroker):
                             x[uri][d['custom_key']] = d['custom_value']
         return sysMetaList
 
-    # TODO: handling possible duplicate or null data.
     def execute_query(self, query, acc, con, obj, includeURI):
         """
         Execute the main query.
@@ -806,33 +805,42 @@ class MetadataBroker(OrientDBBroker):
             if not includeURI:
                 try:
                     uri = row['object_uri']
-                    retList.append({uri: row})
+                    if not any(uri in d for d in retList):
+                        retList.append({uri: row})
                     del row['object_uri']
                 except KeyError:
                     pass
                 try:
                     uri = row['container_uri']
-                    retList.append({uri: row})
+                    if not any(uri in d for d in retList):
+                        retList.append({uri: row})
                     del row['container_uri']
                 except KeyError:
                     pass
                 try:
                     uri = row['account_uri']
-                    retList.append({uri: row})
+                    if not any(uri in d for d in retList):
+                        retList.append({uri: row})
                     del row['account_uri']
                 except KeyError:
                     pass
             else:
                 try:
-                    retList.append({row['object_uri']: row})
+                    uri = row['object_uri']
+                    if not any(uri in d for d in retList):
+                        retList.append({uri: row})
                 except KeyError:
                     pass
                 try:
-                    retList.append({row['container_uri']: row})
+                    uri = row['container_uri']
+                    if not any(uri in d for d in retList):
+                        retList.append({uri: row})
                 except KeyError:
                     pass
                 try:
-                    retList.append({row['account_uri']: row})
+                    uri = row['account_uri']
+                    if not any(uri in d for d in retList):
+                        retList.append({uri: row})
                 except KeyError:
                     pass
         return retList
