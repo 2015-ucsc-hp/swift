@@ -837,8 +837,8 @@ class MetadataBroker(OrientDBBroker):
                     pass
         return retList
 
-    # TODO: Correct this to be match mariadb/server.py
     def is_initialized(self):
+        """Returns true if the database has tables and is ready for use."""
         row = self.conn.query("select from (select expand(classes) from metadata:schema) where name = 'Metadata'")
         return len(row) != 0
 
