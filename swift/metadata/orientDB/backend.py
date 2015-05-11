@@ -23,13 +23,7 @@ import pyorient
 
 # TODO: merge orientdbbroker into metadata broker
 class OrientDBBroker(object):
-    """
-    Encapsulates working with an OrientDB database.
-
-    server.py creates MetadataBroker(OrientDBBroker) which calls OrientDBBroker.__init__(),
-    server.py calls OrientDBBroker.initialize(),
-    if the tables do not exist server.py calls MetadataBroker._initialize()
-    """
+    """Encapsulates connecting to an OrientDB database."""
 
     # TODO: Retrieve IP/user/pw of an orientdb node from configuration file
     def __init__(self):
@@ -37,34 +31,23 @@ class OrientDBBroker(object):
         self.db_address = "127.0.0.1"
 
     def initialize(self):
-        """
-        Connect to and/or create the DB
-        """
+        """Connect to and/or create the DB or tables if they are missing."""
         self.conn = pyorient.OrientDB("localhost", 2424)
         self.conn.connect("root","hpgroup")
         if not self.conn.db_exists("metadata", pyorient.STORAGE_TYPE_PLOCAL):
-            self.conn.db_create( "metadata", pyorient.DB_TYPE_DOCUMENT, pyorient.STORAGE_TYPE_PLOCAL )
             # TODO: Does it block to create the DB? While db is being created and tables are made
             # other requests are going to run into various errors. Also in the case of crawlers
             # the database will try to insert inconsistent data (containers without account or objects
-            # without containers)
-            time.sleep(20)
+            # without container)
+            self.conn.db_create( "metadata", pyorient.DB_TYPE_DOCUMENT, pyorient.STORAGE_TYPE_PLOCAL )
+        self.conn.db_open("metadata", "root", "hpgroup")
         if not self.is_initialized():
             self._initialize()
-        self.conn.db_open("metadata", "root", "hpgroup")
-    
+
 
 class MetadataBroker(OrientDBBroker):
-    """
-    initialize the database and four tables.
-    Three are for system metadata of account, container and object server.
-    custom metadata are stored in key-value pair format in another table.
-    """
-    # TODO: cleanup the class docstring
-    # TODO: cleanup the global variables
-    type = 'metadata'
-    db_contains_type = 'object'
-    db_reclaim_timestamp = 'created_at'
+    """Encapsulates accessing metadata from an OrientDB database."""
+
     account_fields = [
         "account_uri",
         "account_name",
@@ -127,12 +110,12 @@ class MetadataBroker(OrientDBBroker):
     ]
 
     def _initialize(self):
-        """ Initialize the tables of the database """
+        """Initialize the tables of the database."""
         self.create_md_table()
         self.create_custom_md_table()
 
     def create_md_table(self):
-        """ Issue a batch console command to create the metadata table """
+        """Issue a batch console command to create the metadata table."""
         self.conn.batch("""
             CREATE CLASS Metadata;
             CREATE PROPERTY Metadata.account_uri STRING;
@@ -193,7 +176,7 @@ class MetadataBroker(OrientDBBroker):
         """)
 
     def create_custom_md_table(self):
-        """ Issue a batch console command to create the metadata table """
+        """Issue a batch console command to create the custom table."""
         self.conn.batch("""
             CREATE CLASS Custom;
             CREATE PROPERTY Custom.uri STRING;
@@ -203,7 +186,7 @@ class MetadataBroker(OrientDBBroker):
         """)
 
     def insert_custom_md(self, uri, key, value):
-        """Data insertion method for custom metadata table"""
+        """Data insertion method for custom metadata table."""
         query = '''UPDATE Custom SET
                 uri = '%s',
                 custom_key = '%s',
@@ -213,13 +196,12 @@ class MetadataBroker(OrientDBBroker):
             AND
                 custom_key = '%s'
         '''
-        # Build and execute query for each requested insertion
         formatted_query = \
             query % (uri, key, value, uri, key)
         self.conn.command(formatted_query)
 
     def insert_account_md(self, data):
-        """Data insertion method for account metadata, does not update delete_at or delete_time"""
+        """Data insertion method for account metadata, does not update delete_at or delete_time."""
         query = '''UPDATE Metadata SET
                 account_uri = "%s",
                 account_name = "%s",
@@ -252,7 +234,7 @@ class MetadataBroker(OrientDBBroker):
             self.conn.command(formatted_query)
 
     def insert_container_md(self, data):
-        """Data insertion method for container metadata, does not update delete_at or delete_time"""
+        """Data insertion method for container metadata, does not update delete_at or delete_time."""
         query = '''UPDATE Metadata SET
                 account_uri = "%s",
                 account_name = "%s",
@@ -283,7 +265,7 @@ class MetadataBroker(OrientDBBroker):
         '''
 
         for row in data:
-            # Query for account details for denormalized insertion
+            # Query for account details for a denormalized insertion.
             acc_query = '''SELECT
                     account_uri,
                     account_name,
@@ -302,11 +284,11 @@ class MetadataBroker(OrientDBBroker):
                 row['container_account_name']
             )
             queryList = self.conn.query(acc_query)
-            try:
-                acc_data = queryList[0].oRecordData
-            except KeyError, e:
-                # TODO: this data inserted has no parent data in the metadata DB
-              
+            if (len(queryList) == 0):
+                print "The parent account could not be found in the DB"
+                return
+            acc_data = queryList[0].oRecordData
+            
             formatted_query = query % (
                 acc_data['account_uri'],
                 acc_data['account_name'],
@@ -337,7 +319,7 @@ class MetadataBroker(OrientDBBroker):
             self.conn.command(formatted_query)
 
     def insert_object_md(self, data):
-        """Data insertion method for object metadata, does not update delete_at or delete_time"""
+        """Data insertion method for object metadata, does not update delete_at or delete_time."""
         query = '''UPDATE Metadata SET
                 account_uri = "%s",
                 account_name = "%s",
@@ -395,7 +377,7 @@ class MetadataBroker(OrientDBBroker):
         '''
 
         for row in data:
-            # Query for account details for denormalized insertion
+            # Query for account details for a denormalized insertion.
             acc_cont_query = '''SELECT
                     account_uri,
                     account_name,
@@ -431,10 +413,10 @@ class MetadataBroker(OrientDBBroker):
                 row['object_container_name']
             )
             queryList = self.conn.query(acc_cont_query)
-            try:
-                acc_cont_data = queryList[0].oRecordData
-            except KeyError, e:
-                # TODO: this data inserted has no parent data in the metadata DB
+            if (len(queryList) == 0):
+                # The parent container could not be found in the DB
+                return
+            acc_cont_data = queryList[0].oRecordData
             
             formatted_query = query % (
                 acc_cont_data['account_uri'],
@@ -493,7 +475,7 @@ class MetadataBroker(OrientDBBroker):
             self.conn.command(formatted_query)
 
     def delete_account_md(self, uri, timestamp):
-        """Data deletion method for account metadata"""
+        """Data deletion method for account metadata."""
         query = '''UPDATE Metadata SET
                 account_tenant_id = null,
                 account_first_use_time = null,
@@ -523,7 +505,7 @@ class MetadataBroker(OrientDBBroker):
             # TODO: remove custom metadata
 
     def delete_container_md(self, uri, timestamp):
-        """Data deletion method for container metadata"""
+        """Data deletion method for container metadata."""
         query = '''UPDATE Metadata SET
                 container_create_time = null,
                 container_last_modified_time = null,
@@ -595,70 +577,69 @@ class MetadataBroker(OrientDBBroker):
             # TODO: remove custom metadata
 
     def delete_custom_md(self, uri):
-        """Not implemented"""
+        """Not implemented yet"""
 
-    def overwrite_custom_md(self, conn, uri, data):
-        """Data overwrite method for custom metadata table,
-        deletes all rows that are not updated"""
-        # Remove all custom metadata that is not listed in data
-        query = "DELETE FROM Custom WHERE uri = '" + str(uri)
-        inserted_fields = []
-        for field, value in data.items():
-            inserted_fields.append(str(field) + " <> '" + str(value) + "'")
-        query += " and ".join(inserted_fields)
-        conn.command(query)
-
-        # Update all custom metadata listed in data
-        for field, value in data.items():
-            insert_custom_md(self, conn, uri, field, value)
+    def overwrite_custom_md(self, uri, key, value):
+        """Updates the given field in custom metadata."""
+        query = '''UPDATE Custom SET
+                uri = '%s',
+                custom_key = '%s',
+                custom_value = '%s',
+            WHERE
+                uri = '%s',
+            AND
+                custom_key = '%s'
+        '''
+        formatted_query = \
+            query % (uri, key, value, uri, key)
+        self.conn.command(formatted_query)
 
     def overwrite_account_md(self, data):
-        """Data overwrite method for account data in metadata table,
-        nulls all fields that are not updated"""
+        """Updates the given account fields in metadata."""
         query = "UPDATE Metadata SET "
         inserted_fields = []
         for field in account_fields:
             if field in data:
                 inserted_fields.append(str(field) + " = '" + str(data[field]) + "'")
-            else:
-                inserted_fields.append(str(field) + " = null")
+        if (len(inserted_fields) == 0):
+            print "backend.py:overwrite_account_md: Data malformed, no valid fields provided."
         query += " and " + " ,".join(inserted_fields)
-        query += " UPSERT WHERE account_uri = '" + str(data['account_uri']) + "'"
+        query += " WHERE account_uri = '" + str(data['account_uri']) + "'"
         self.conn.command(query)
 
-    # TODO: check for parent account changes
+    # TODO: check for parent account changes and update
+    # denormalized fields.
     def overwrite_container_md(self, data):
-        """Data overwrite method for container data in metadata table,
-        nulls all fields that are not updated"""
+        """Updates the given container fields in metadata"""
         query = "UPDATE Metadata SET "
         inserted_fields = []
         for field in container_fields:
             if field in data:
                 inserted_fields.append(str(field) + " = '" + str(data[field]) + "'")
-            else:
-                inserted_fields.append(str(field) + " = null")
+        if (len(inserted_fields) == 0):
+            print "backend.py:overwrite_container_md: Data malformed, no valid fields provided."
         query += " and " + " ,".join(inserted_fields)
-        query += " UPSERT WHERE container_uri = '" + str(data['container_uri']) + "'"
+        query += " WHERE container_uri = '" + str(data['container_uri']) + "'"
         self.conn.command(query)
 
-    # TODO: check for parent account or container changes
+    # TODO: check for parent account or container changes and update
+    # denormalized fields.
     def overwrite_object_md(self, data):
-        """Data insertion methods for object data in metadata table,
-        nulls all fields that are not updated"""
+        """Updates the given object fields in metadata"""
         query = "UPDATE Metadata SET "
         inserted_fields = []
         for field in object_fields:
             if field in data:
                 inserted_fields.append(str(field) + " = '" + str(data[field]) + "'")
-            else:
-                inserted_fields.append(str(field) + " = null")
+        if (len(inserted_fields) == 0):
+            print "backend.py:overwrite_object_md: Data malformed, no valid fields provided."
         query += " and " + " ,".join(inserted_fields)
         query += " WHERE object_uri = '" + str(data['object_uri']) + "'"
         self.conn.command(query)
 
     def getAll(self):
         """
-        Dump everything, used for debugging
+        Dump everything, used for debugging.
         """
         obj_data = [record.oRecordData for record in self.conn.query("SELECT FROM Metadata")]
 
@@ -767,13 +748,13 @@ class MetadataBroker(OrientDBBroker):
                         or i.startswith("account_meta")):
                 first = i.split("_")[0]
                 key = "_".join(i.translate(maketrans("<>!=","____")).split("_")[:3])
-                # Append a new subquery variable after FROM section
+                # Append a new subquery variable after FROM section.
                 sql = sql.replace("FROM Metadata","FROM Metadata let $temp" + count + "=(SELECT FROM Custom WHERE custom_key=" + first + " AND uri=" + key + " AND custom_value" + i[len(key):] + ") ")
-                # Add WHERE condition that subquery returns results
+                # Add WHERE condition that subquery returns results.
                 i = "$temp" + count + ".size() > 0"
                 count += 1
             # TODO: must add spaces around '<' and '>' or orientDB has
-            # formatting errors
+            # formatting errors.
             query += " " + i
 
         return sql + " AND" + query
@@ -804,7 +785,7 @@ class MetadataBroker(OrientDBBroker):
                             x[uri][d['custom_key']] = d['custom_value']
         return sysMetaList
 
-    # TODO: handling duplicate and null data
+    # TODO: handling possible duplicate or null data.
     def execute_query(self, query, acc, con, obj, includeURI):
         """
         Execute the main query.
