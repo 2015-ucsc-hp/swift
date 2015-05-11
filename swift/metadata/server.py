@@ -182,6 +182,11 @@ class MetadataController(object):
         
         self.diskfile_mgr = DiskFileManager(conf,self.logger)
 
+        self.db_ip = conf.get('db_ip', '127.0.0.1')
+        self.db_port = int(conf.get('db_port', 2424))
+        self.db_user = conf.get('db_user', 'root')
+        self.db_pw = conf.get('db_pw', 'root')
+
         if config_true_value(conf.get('allow_versions', 'f')):
             self.save_headers.append('x-versions-location')
 
@@ -192,8 +197,7 @@ class MetadataController(object):
         """
         Returns an instance of the DB abstraction layer object (broker)
         """
-        #kwargs.setdefault('db_file', self.db_file)
-        #return MetadataBroker(**kwargs)
+        return MetadataBroker(self.db_ip,self.db_port,self.db_user,self.db_pw)
 
     def check_attrs(self, attrs, acc, con, obj):
         """

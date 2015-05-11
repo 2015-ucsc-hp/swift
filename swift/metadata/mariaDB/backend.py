@@ -28,9 +28,12 @@ class MariaDBBroker(object):
     if the tables do not exist server.py calls MetadataBroker._initialize()
     """
     # TODO: Retrieve IP/user/pw of load balancer from configuration file
-    def __init__(self):
+    def __init__(self,db_ip,db_port,db_user,db_pw):
         self.conn = None
-        self.db_address = "127.0.0.1"
+        self.db_ip = db_ip
+        self.db_port = db_port
+        self.db_user = db_user
+        self.db_pw = db_pw
         
     # TODO: Check failure for db not exist and
     # prevent begin creation
@@ -38,8 +41,7 @@ class MariaDBBroker(object):
         """
         Create and connect to the DB
         """
-        conn = mdb.connect('127.0.0.1', 'root', 'root', 'metadata')
-        self.conn = conn
+        self.conn = mdb.connect(self.db_ip, self.db_user, self.db_pw, 'metadata')
 
 class MetadataBroker(MariaDBBroker):
 
