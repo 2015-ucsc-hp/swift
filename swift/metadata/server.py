@@ -152,7 +152,7 @@ class MetadataController(object):
         # location/directory of the metadata database (meta.db)
         self.location = conf.get('location', '/srv/node/sdb1/metadata/')
         # path the the actual file
-        self.db_file = os.path.join(self.location, 'meta.db')
+        #self.db_file = os.path.join(self.location, 'meta.db')
         self.logger = logger or get_logger(conf, log_route='metadata-server')
         self.root = conf.get('devices', '/srv/node')
         #workaround for device listings
@@ -182,6 +182,11 @@ class MetadataController(object):
         
         self.diskfile_mgr = DiskFileManager(conf,self.logger)
 
+        self.db_ip = conf.get('db_ip', '127.0.0.1')
+        self.db_port = int(conf.get('db_port', 2424))
+        self.db_user = conf.get('db_user', 'root')
+        self.db_pw = conf.get('db_pw', 'root')
+
         if config_true_value(conf.get('allow_versions', 'f')):
             self.save_headers.append('x-versions-location')
 
@@ -192,8 +197,7 @@ class MetadataController(object):
         """
         Returns an instance of the DB abstraction layer object (broker)
         """
-        kwargs.setdefault('db_file', self.db_file)
-        return MetadataBroker(**kwargs)
+        return MetadataBroker(self.db_ip,self.db_port,self.db_user,self.db_pw)
 
     def check_attrs(self, attrs, acc, con, obj):
         """
@@ -434,6 +438,7 @@ class MetadataController(object):
                             #TODO: insert container_last_activity_time
                             #TODO: split meta user/sys
                             #TODO: insert meta
+                            insert_container_md(sys_md)
                             return
                         except DatabaseConnectionError as e:
                             self.logger.warn("DatabaseConnectionError: " + e.path + "\n")
@@ -544,25 +549,25 @@ class MetadataController(object):
                     for item in self.devicelist:
                         if node['device'] in item:
                             try:
-                            path = os.path.join(self.root + item, db_dir, hsh + '.db')
-                            broker = swift.container.backend.ContainerBroker(path, **kwargs)
-                            md = broker.get_info()
-                            md.update(
-                                (key, value)
-                                for key, (value, timestamp) in broker.metadata.iteritems()
-                                if value != '' and is_sys_or_user_meta('container', key))
-                            sys_md = format_con_metadata(md)
-                            user_md = format_custom_metadata(md)
-                            if 'X-Container-Read' in req.headers:
-                                sys_md['container_read_permissions'] = req.headers['X-Container-Read']
-                            if 'X-Container-Write' in req.headers:
-                                sys_md['container_write_permissions'] = req.headers['X-Container-Write']
+                                path = os.path.join(self.root + item, db_dir, hsh + '.db')
+                                broker = swift.container.backend.ContainerBroker(path, **kwargs)
+                                md = broker.get_info()
+                                md.update(
+                                    (key, value)
+                                    for key, (value, timestamp) in broker.metadata.iteritems()
+                                    if value != '' and is_sys_or_user_meta('container', key))
+                                sys_md = format_con_metadata(md)
+                                user_md = format_custom_metadata(md)
+                                if 'X-Container-Read' in req.headers:
+                                    sys_md['container_read_permissions'] = req.headers['X-Container-Read']
+                                    if 'X-Container-Write' in req.headers:
+                                        sys_md['container_write_permissions'] = req.headers['X-Container-Write']
                             #TODO: call overwrite_container_metadata
                             #TODO: call overwrite_custom_metadata
-                            return
-            except DatabaseConnectionError as e:
-                self.logger.warn("DatabaseConnectionError: " + e.path + "\n")
-                pass
+                                        return
+                            except DatabaseConnectionError as e:
+                                self.logger.warn("DatabaseConnectionError: " + e.path + "\n")
+                                pass
             except:
                 self.logger.warn("%s: %s\n"%(str(sys.exc_info()[0]),str(sys.exc_info()[1])))
                 pass

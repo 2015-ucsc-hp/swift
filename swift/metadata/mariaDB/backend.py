@@ -18,9 +18,6 @@ from string import maketrans
 from swift.common.utils import normalize_timestamp
 from swift.common.utils import json
 import MySQLdb as mdb
-
-# TODO: When server.py is cleaned up this can be removed
-BROKER_TIMEOUT = 25
                               
 class MariaDBBroker(object):
     """
@@ -30,29 +27,25 @@ class MariaDBBroker(object):
     server.py calls MariaDBBroker.initialize(),
     if the tables do not exist server.py calls MetadataBroker._initialize()
     """
-    
-    # TODO: update defn and function calls in server.py to be simpler
-    #       and trim out unused portions of sqlite code
-    def __init__(self, db_file, timeout=BROKER_TIMEOUT, logger=None,
-                 account=None, container=None, pending_timeout=None,
-                 stale_reads_ok=False):
-        self.conn = None
-        self.db_address = "127.0.0.1"
-        self.timeout = timeout
-        
-    # TODO: rename to connect(), check failure for db not exist and
-    # prevent further use in server.py
     # TODO: Retrieve IP/user/pw of load balancer from configuration file
+    def __init__(self,db_ip,db_port,db_user,db_pw):
+        self.conn = None
+        self.db_ip = db_ip
+        self.db_port = db_port
+        self.db_user = db_user
+        self.db_pw = db_pw
+        
+    # TODO: Check failure for db not exist and
+    # prevent begin creation
     def initialize(self):
         """
         Create and connect to the DB
         """
-        conn = mdb.connect('127.0.0.1', 'root', 'root', 'metadata')
-        self.conn = conn
+        self.conn = mdb.connect(self.db_ip, self.db_user, self.db_pw, 'metadata')
 
 class MetadataBroker(MariaDBBroker):
 
-    def _initialize(self, timestamp):
+    def _initialize(self):
           """
         Initialize the database and four tables.
         Three are for system metadata of account, container and object server.
@@ -152,7 +145,7 @@ class MetadataBroker(MariaDBBroker):
             );
         """)
 
-    def insert_custom_md(self, conn, uri, key, value):
+    def insert_custom_md(self, uri, key, value):
         query = '''
             INSERT INTO custom_metadata (
                 uri,
@@ -691,41 +684,12 @@ class MetadataBroker(MariaDBBroker):
                     pass
         return retList
 
-    # TODO: Correct this to be more useful for mariadb
-    def is_deleted(self, mdtable, timestamp=None):
-        '''
-        Determine whether a DB is considered deleted
-        :param mdtable: a string representing the relevant object type
-            (account, container, object)
-        :returns: True if the DB is considered deleted, False otherwise
-        '''
-        cur = self.conn.cursor()
-        cur.execute("SHOW TABLES LIKE 'account_metadata'")
-        row = cur.fetchone()
-        #self._commit_puts_stale_ok() for true
-        return (row != None)
-
-    # TODO: Correct this to be more useful for mariadb
     def is_initialized(self):
+        """Returns true if the database has tables and is ready for use."""
         cur = self.conn.cursor()
         cur.execute("SHOW TABLES LIKE 'account_metadata'")
         row = cur.fetchone()
         return (row != None)
-      
-    # TODO: Correct this to be more useful for mariadb
-    #       and replace commit_puts_stale_ok
-    def empty(self):
-        """
-        Check if the Metadata DB is empty.
-
-        :returns: True if the database has no metadata.
-        """
-        #self._commit_puts_stale_ok()
-        cur = conn.cursor()
-        row = cur.execute(
-            'SELECT account_container_count from account_metadata'). \
-            fetchone()
-        return (row[0] == 0)
 
 # TODO: Remove, possibly replaced by 
 #       self.conn.cursor(mdb.cursors.DictCursor)
