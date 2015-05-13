@@ -60,6 +60,13 @@ class MetaDataMiddleware(object):
                     return start_response(status, headers)
                 return self.app(env, post_start_response)
 
+            if (requestMethod == 'PUT') and ('X-Copy-From' in req.headers):
+                #Modify the PUT to be a COPY for seamless operation
+                v, a, c, o = split_path(req.path, 1, 4, True)
+                req.path = ('/' + '/'.join([v,a]) + req.headers['X-Copy-From'])
+                req.headers['Destination'] = '/'.join([c,o]) 
+                requestMethod = 'COPY'
+
             if requestMethod == 'COPY':
                 def copy_start_response(status, headers):
                     if '201' in status:
@@ -113,8 +120,9 @@ class MetaDataMiddleware(object):
         resp = conn.getresponse()
         return self.app
 
-    def DELETE(self, req):
+    def DELETE(self, env):
         """Eliminate metadata for deleted objects"""
+        req = Request(env)
         conn = HTTPConnection('%s:%s' % (self.mds_ip, self.mds_port))
         headers = req.params
         conn.request('DELETE', req.path, headers=headers)
@@ -122,8 +130,9 @@ class MetaDataMiddleware(object):
         #confirm response then pass along the request
         return self.app
 
-    def COPY(self, req):
+    def COPY(self, env):
         """Eliminate metadata for deleted objects"""
+        req = Request(env)
         conn = HTTPConnection('%s:%s' % (self.mds_ip, self.mds_port))
         headers = req.params
         conn.request('COPY', req.path, headers=headers)
@@ -131,10 +140,28 @@ class MetaDataMiddleware(object):
         #confirm response then pass along the request
         return self.app
 
-    def POST(self, req):
+    def POST(self, env):
         """Handle posts dealing with metadata alteration"""
+        req = Request(env)
         conn = HTTPConnection('%s:%s' % (self.mds_ip, self.mds_port))
         headers = req.params
+        version, acc, con, obj = split_path(req.path, 1, 4, True)
+        if not con:
+            try:
+                info = get_account_info(env, self.app)
+                if info:
+                    stor_policy = info['storage_policy']
+                    headers['storage_policy'] = stor_policy
+            except:
+                pass
+        else:
+            try:
+                info = get_container_info(env, self.app)
+                if info:
+                    stor_policy = info['storage_policy']
+                    headers['storage_policy'] = stor_policy
+            except:
+                pass
         conn.request('POST', req.path, headers=headers)
         resp = conn.getresponse()
         #confirm response then pass along the request
