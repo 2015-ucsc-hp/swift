@@ -387,38 +387,11 @@ class ContainerController(BaseStorageServer):
             if resp:
                 return resp
             if created:
-                metaDict = {}
-                metaList = []
-                f = open('/home/ubuntu/containerstuff','w')
-                metaDict = broker.get_info()
-                metaDict.update(
-                    (key, value)
-                    for key, (value, timestamp) in broker.metadata.iteritems()
-                    if value != '' and is_sys_or_user_meta('container', key))
-                if metaDict != {}:
-                    metaList.append(format_metadata(metaDict))
-                    for item in metaList:
-                        f.write("%s\n" % item)
-                    ContainerSender = Sender(self.conf)
-                    ContainerSender.sendData(metaList, 'container_data', self.ip, self.port)
                 return HTTPCreated(request=req,
                                    headers={'x-backend-storage-policy-index':
                                             broker.storage_policy_index})
             else:
-                metaDict = {}
-                metaList = []
-                f = open('/home/ubuntu/containerstuff','w')
-                metaDict = broker.get_info()
-                metaDict.update(
-                    (key, value)
-                    for key, (value, timestamp) in broker.metadata.iteritems()
-                    if value != '' and is_sys_or_user_meta('container', key))
-                if metaDict != {}:
-                    metaList.append(format_metadata(metaDict))
-                    for item in metaList:
-                        f.write("%s\n" % item)
-                    ContainerSender = Sender(self.conf)
-                    ContainerSender.sendData(metaList, 'container_data', self.ip, self.port)
+                
                 return HTTPAccepted(request=req,
                                     headers={'x-backend-storage-policy-index':
                                              broker.storage_policy_index})
