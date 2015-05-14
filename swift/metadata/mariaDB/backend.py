@@ -49,7 +49,7 @@ class MariaDBBroker(object):
                 self.conn = mdb.connect(self.db_ip, self.db_user, self.db_pw)
                 cursor = self.conn.cursor()
                 cursor.execute('CREATE DATABASE metadata')
-        if not self.is_initialized():
+        if not is_initialized():
             self._initialize()
 
 class MetadataBroker(MariaDBBroker):
