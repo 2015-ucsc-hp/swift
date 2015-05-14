@@ -429,7 +429,7 @@ class MetadataController(object):
                                 (key, value)
                                 for key, (value, timestamp) in broker.metadata.iteritems()
                                 if value != '' and is_sys_or_user_meta('container', key))
-                            sys_md = format_container_metadata(md)
+                            sys_md = format_con_metadata(md)
                             user_md = format_custom_metadata(md)
                             if 'X-Container-Read' in req.headers:
                                 sys_md['container_read_permissions'] = req.headers['X-Container-Read']
