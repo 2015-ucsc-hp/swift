@@ -390,7 +390,7 @@ class MetadataBroker(OrientDBBroker):
                     account_last_activity_time,
                     account_container_count,
                     account_object_count,
-                    account_bytes_used
+                    account_bytes_used,
                     container_uri,
                     container_name,
                     container_account_name,

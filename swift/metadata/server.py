@@ -427,7 +427,7 @@ class MetadataController(object):
                             path = os.path.join(self.root + item, db_dir, hsh + '.db')
                             #TODO: move kwargs
                             kwargs = {'account':acc, 'container':con, 'logger':self.logger}
-                            broker = swift.container.backend.ContainerBroker(path, **kwargs)
+                            broker= swift.container.backend.ContainerBroker(path, **kwargs)
                             md = broker.get_info()
                             md.update(
                                 (key, value)
@@ -442,7 +442,7 @@ class MetadataController(object):
                             #TODO: insert container_last_activity_time
                             #TODO: split meta user/sys
                             #TODO: insert meta
-                            broke.insert_container_md(sys_md)
+                            broke.insert_container_md([sys_md])
                             return
                         except DatabaseConnectionError as e:
                             self.logger.warn("DatabaseConnectionError: " + e.path + "\n")
@@ -465,6 +465,7 @@ class MetadataController(object):
                             sys_md['object_location'] = df._data_file
                             user_md = format_custom_metadata(md)
                             #TODO: insert user meta and sys meta
+                            broke.insert_object_md([sys_md])
                         except:
                             self.logger.warn("%s: %s\n"%(str(sys.exc_info()[0]),str(sys.exc_info()[1])))
                             pass
