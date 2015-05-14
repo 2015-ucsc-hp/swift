@@ -35,14 +35,14 @@ class OrientDBBroker(object):
     def initialize(self):
         """Connect to and/or create the DB or tables if they are missing."""
         self.conn = pyorient.OrientDB(self.db_ip, self.db_port)
-        self.conn.connect(self.db_user, db_pw)
+        self.conn.connect(self.db_user, self.db_pw)
         if not self.conn.db_exists("metadata", pyorient.STORAGE_TYPE_PLOCAL):
             # TODO: Does it block to create the DB? While db is being created and tables are made
             # other requests are going to run into various errors. Also in the case of crawlers
             # the database will try to insert inconsistent data (containers without account or objects
             # without container)
             self.conn.db_create( "metadata", pyorient.DB_TYPE_DOCUMENT, pyorient.STORAGE_TYPE_PLOCAL )
-        self.conn.db_open("metadata", self.db_user, db_pw)
+        self.conn.db_open("metadata", self.db_user, self.db_pw)
         if not self.is_initialized():
             self._initialize()
 
