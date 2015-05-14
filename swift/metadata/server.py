@@ -472,11 +472,12 @@ class MetadataController(object):
         version, acc, con, obj = split_path(req.path, 1, 4, True)
         timestamp = Timestamp(time.time()).isoformat()
         data_type = ''
+        md = {}
         if not con and not obj:
             #do nothing. accounts cannot be deleted
             return
         elif not obj:
-            md = build_con_metadata(md)
+            md = format_con_metadata(md)
             md['container_delete_time'] = timestamp
             md['container_last_activity_time'] = timestamp
             data_type = 'container'
@@ -487,7 +488,7 @@ class MetadataController(object):
             #TODO: overwrite container metadata
             #TODO: delete container custom metadata
         else:
-            md = build_obj_metadata(md)
+            md = format_obj_metadata(md)
             md['object_delete_time'] = timestamp
             md['object_last_activity_time'] = timestamp
             data_type = 'object'
