@@ -39,7 +39,7 @@ from swift.common.swob import HTTPBadRequest, HTTPConflict, \
     HTTPException
 
 from swift.metadata.utils import output_plain, output_json, output_xml, Sort_metadata, \
-    format_obj_metadata, format_con_metadata, format_acc_metadata
+    format_obj_metadata, format_con_metadata, format_acc_metadata, format_custom_metadata
 
 from swift.common.constraints import valid_timestamp
 
