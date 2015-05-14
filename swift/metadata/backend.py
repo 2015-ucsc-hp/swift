@@ -16,184 +16,387 @@ import os
 import time
 from string import maketrans
 from swift.common.utils import normalize_timestamp
-from swift.common.db import DatabaseBroker
 from swift.common.utils import json
+import pyorient
+
+# TODO: go over all queries and look into using transactions
+
+# TODO: merge orientdbbroker into metadata broker
+class OrientDBBroker(object):
+    """Encapsulates connecting to an OrientDB database."""
+
+    def __init__(self,db_ip,db_port,db_user,db_pw):
+        self.conn = None
+        self.db_ip = db_ip
+        self.db_port = db_port
+        self.db_user = db_user
+        self.db_pw = db_pw
+        
+    def initialize(self):
+        """Connect to and/or create the DB or tables if they are missing."""
+        self.conn = pyorient.OrientDB(self.db_ip, self.db_port)
+        self.conn.connect(self.db_user, self.db_pw)
+        if not self.conn.db_exists("metadata", pyorient.STORAGE_TYPE_PLOCAL):
+            # TODO: Does it block to create the DB? While db is being created and tables are made
+            # other requests are going to run into various errors. Also in the case of crawlers
+            # the database will try to insert inconsistent data (containers without account or objects
+            # without container)
+            self.conn.db_create( "metadata", pyorient.DB_TYPE_DOCUMENT, pyorient.STORAGE_TYPE_PLOCAL )
+        self.conn.db_open("metadata", self.db_user, self.db_pw)
+        if not self.is_initialized():
+            self._initialize()
 
 
-class MetadataBroker(DatabaseBroker):
-    """ 
-    initialize the database and four tables.
-    Three are for system metadata of account, container and object server. 
-    custom metadata are stored in key-value pair format in another table.
-    """
-    type = 'metadata'
-    db_contains_type = 'object'
-    db_reclaim_timestamp = 'created_at'
+class MetadataBroker(OrientDBBroker):
+    """Encapsulates accessing metadata from an OrientDB database."""
 
-    
-    def _initialize(self, conn, timestamp):
-        self.create_account_md_table(conn)
-        self.create_container_md_table(conn)
-        self.create_object_md_table(conn)
-        self.create_custom_md_table(conn)
+    account_fields = [
+        "account_uri",
+        "account_name",
+        "account_tenant_id",
+        "account_first_use_time",
+        "account_last_modified_time",
+        "account_last_changed_time",
+        "account_delete_time",
+        "account_last_activity_time",
+        "account_container_count",
+        "account_object_count",
+        "account_bytes_used"
+    ]
+    container_fields = [
+        "container_uri",
+        "container_name",
+        "container_account_name",
+        "container_create_time",
+        "container_last_modified_time",
+        "container_last_changed_time",
+        "container_delete_time",
+        "container_last_activity_time",
+        "container_read_permissions",
+        "container_write_permissions",
+        "container_sync_to",
+        "container_sync_key",
+        "container_versions_location",
+        "container_object_count",
+        "container_bytes_used",
+    ]
+    object_fields = [
+        "object_uri",
+        "object_name",
+        "object_account_name",
+        "object_container_name",
+        "object_location",
+        "object_uri_create_time",
+        "object_last_modified_time",
+        "object_last_changed_time",
+        "object_delete_time",
+        "object_last_activity_time",
+        "object_etag_hash",
+        "object_content_type",
+        "object_content_length",
+        "object_content_encoding",
+        "object_content_disposition",
+        "object_content_language",
+        "object_cache_control",
+        "object_delete_at","manifest_type",
+        "object_manifest",
+        "object_access_control_allow_origin",
+        "object_access_control_allow_credentials",
+        "object_access_control_expose_headers",
+        "object_access_control_max_age",
+        "object_allow_methods",
+        "object_allow_headers",
+        "object_origin",
+        "object_access_control_request_method",
+        "object_access_control_request_headers"
+    ]
 
-    def create_account_md_table(self, conn):
-        conn.executescript("""
-            CREATE TABLE account_metadata (
-                account_uri TEXT PRIMARY KEY,
-                account_name TEXT,
-                account_tenant_id TEXT,
-                account_first_use_time TEXT DEFAULT '0',
-                account_last_modified_time TEXT DEFAULT '0',
-                account_last_changed_time TEXT DEFAULT '0',
-                account_delete_time TEXT DEFAULT '0',
-                account_last_activity_time TEXT DEFAULT '0',
-                account_container_count INTEGER,
-                account_object_count INTEGER,
-                account_bytes_used INTEGER
-            );
+    def _initialize(self):
+        """Initialize the tables of the database."""
+        self.create_md_table()
+        self.create_custom_md_table()
+
+    def create_md_table(self):
+        """Issue a batch console command to create the metadata table."""
+        self.conn.batch("""
+            CREATE CLASS Metadata;
+            CREATE PROPERTY Metadata.account_uri STRING;
+            CREATE PROPERTY Metadata.account_name STRING;
+            CREATE PROPERTY Metadata.account_tenant_id STRING;
+            CREATE PROPERTY Metadata.account_first_use_time STRING;
+            CREATE PROPERTY Metadata.account_last_modified_time STRING;
+            CREATE PROPERTY Metadata.account_last_changed_time STRING;
+            CREATE PROPERTY Metadata.account_delete_time STRING;
+            CREATE PROPERTY Metadata.account_last_activity_time STRING;
+            CREATE PROPERTY Metadata.account_container_count LONG;
+            CREATE PROPERTY Metadata.account_object_count LONG;
+            CREATE PROPERTY Metadata.account_bytes_used LONG;
+            CREATE PROPERTY Metadata.container_uri STRING;
+            CREATE PROPERTY Metadata.container_name STRING;
+            CREATE PROPERTY Metadata.container_account_name STRING;
+            CREATE PROPERTY Metadata.container_create_time STRING;
+            CREATE PROPERTY Metadata.container_last_modified_time STRING;
+            CREATE PROPERTY Metadata.container_last_changed_time STRING;
+            CREATE PROPERTY Metadata.container_delete_time STRING;
+            CREATE PROPERTY Metadata.container_last_activity_time STRING;
+            CREATE PROPERTY Metadata.container_read_permissions STRING;
+            CREATE PROPERTY Metadata.container_write_permissions STRING;
+            CREATE PROPERTY Metadata.container_sync_to STRING;
+            CREATE PROPERTY Metadata.container_sync_key STRING;
+            CREATE PROPERTY Metadata.container_versions_location STRING;
+            CREATE PROPERTY Metadata.container_object_count LONG;
+            CREATE PROPERTY Metadata.container_bytes_used LONG;
+            CREATE PROPERTY Metadata.object_uri STRING;
+            CREATE PROPERTY Metadata.object_name STRING;
+            CREATE PROPERTY Metadata.object_account_name STRING;
+            CREATE PROPERTY Metadata.object_container_name STRING;
+            CREATE PROPERTY Metadata.object_location STRING;
+            CREATE PROPERTY Metadata.object_uri_create_time STRING;
+            CREATE PROPERTY Metadata.object_last_modified_time STRING;
+            CREATE PROPERTY Metadata.object_last_changed_time STRING;
+            CREATE PROPERTY Metadata.object_delete_time STRING;
+            CREATE PROPERTY Metadata.object_last_activity_time STRING;
+            CREATE PROPERTY Metadata.object_etag_hash STRING;
+            CREATE PROPERTY Metadata.object_content_type STRING;
+            CREATE PROPERTY Metadata.object_content_length LONG;
+            CREATE PROPERTY Metadata.object_content_encoding STRING;
+            CREATE PROPERTY Metadata.object_content_disposition STRING;
+            CREATE PROPERTY Metadata.object_content_language STRING;
+            CREATE PROPERTY Metadata.object_cache_control STRING;
+            CREATE PROPERTY Metadata.object_delete_at STRING;
+            CREATE PROPERTY Metadata.object_manifest_type LONG;
+            CREATE PROPERTY Metadata.object_manifest STRING;
+            CREATE PROPERTY Metadata.object_access_control_allow_origin STRING;
+            CREATE PROPERTY Metadata.object_access_control_allow_credentials STRING;
+            CREATE PROPERTY Metadata.object_access_control_expose_headers STRING;
+            CREATE PROPERTY Metadata.object_access_control_max_age STRING;
+            CREATE PROPERTY Metadata.object_allow_methods STRING;
+            CREATE PROPERTY Metadata.object_allow_headers STRING;
+            CREATE PROPERTY Metadata.object_origin STRING;
+            CREATE PROPERTY Metadata.object_access_control_request_method STRING;
+            CREATE PROPERTY Metadata.object_access_control_request_headers STRING;
         """)
 
-    def create_container_md_table(self, conn):
-        conn.executescript("""
-            CREATE TABLE container_metadata (
-                container_uri TEXT PRIMARY KEY,
-                container_name TEXT,
-                container_account_name TEXT,
-                container_create_time TEXT DEFAULT '0',
-                container_last_modified_time TEXT DEFAULT '0',
-                container_last_changed_time TEXT DEFAULT '0',
-                container_delete_time TEXT DEFAULT '0',
-                container_last_activity_time TEXT DEFAULT '0',
-                container_read_permissions TEXT,
-                container_write_permissions TEXT,
-                container_sync_to TEXT,
-                container_sync_key TEXT,
-                container_versions_location TEXT,
-                container_object_count INTEGER,
-                container_bytes_used INTEGER
-            );
+    def create_custom_md_table(self):
+        """Issue a batch console command to create the custom table."""
+        self.conn.batch("""
+            CREATE CLASS Custom;
+            CREATE PROPERTY Custom.uri STRING;
+            CREATE PROPERTY Custom.custom_key STRING;
+            CREATE PROPERTY Custom.custom_value STRING;
+            CREATE INDEX custom_id on Custom (uri, custom_key) UNIQUE;
         """)
 
-    def create_object_md_table(self, conn):
-        conn.executescript("""
-            CREATE TABLE object_metadata (
-                object_uri TEXT PRIMARY KEY,
-                object_name TEXT,
-                object_account_name TEXT,
-                object_container_name TEXT,
-                object_location TEXT,
-                object_uri_create_time TEXT DEFAULT '0',
-                object_last_modified_time TEXT DEFAULT '0',
-                object_last_changed_time TEXT DEFAULT '0',
-                object_delete_time TEXT DEFAULT '0',
-                object_last_activity_time TEXT DEFAULT '0',
-                object_etag_hash TEXT,
-                object_content_type TEXT,
-                object_content_length INTEGER,
-                object_content_encoding TEXT,
-                object_content_disposition TEXT,
-                object_content_language TEXT,
-                object_cache_control TEXT,
-                object_delete_at TEXT DEFAULT '0',
-                object_manifest_type INTEGER,
-                object_manifest TEXT,
-                object_access_control_allow_origin TEXT,
-                object_access_control_allow_credentials TEXT,
-                object_access_control_expose_headers TEXT,
-                object_access_control_max_age TEXT,
-                object_access_control_allow_methods TEXT,
-                object_access_control_allow_headers TEXT,
-                object_origin TEXT,
-                object_access_control_request_method TEXT,
-                object_access_control_request_headers TEXT
-            );
-        """)
-
-    def create_custom_md_table(self, conn):
-        conn.executescript("""
-            CREATE TABLE custom_metadata (
-                uri TEXT NOT NULL,
-                custom_key TEXT NOT NULL,
-                custom_value TEXT,
-                timestamp TEXT,
-                PRIMARY KEY (uri, custom_key)
-            );
-        """)
-
-    def insert_custom_md(self, conn, uri, key, value):
-        query = '''
-            INSERT OR REPLACE INTO custom_metadata (
-                uri,
-                custom_key,
-                custom_value,
-                timestamp
-            )
-            VALUES ("%s","%s","%s","%s")
-            ;
+    def insert_custom_md(self, uri, key, value):
+        """Data insertion method for custom metadata table."""
+        query = '''UPDATE Custom SET
+                uri = '%s',
+                custom_key = '%s',
+                custom_value = '%s',
+            UPSERT WHERE
+                uri = '%s',
+            AND
+                custom_key = '%s'
         '''
-
-        # Build and execute query for each requested insertion
         formatted_query = \
-            query % (uri, key, value, normalize_timestamp(time.time()))
-        conn.execute(formatted_query)
-
+            query % (uri, key, value, uri, key)
+        self.conn.command(formatted_query)
 
     def insert_account_md(self, data):
-        """Data insertion methods for account metadata table"""
-        with self.get() as conn:
-            query = '''
-                INSERT OR REPLACE INTO account_metadata (
+        """Data insertion method for account metadata, does not update delete_at or delete_time."""
+        query = '''UPDATE Metadata SET
+                account_uri = "%s",
+                account_name = "%s",
+                account_tenant_id = "%s",
+                account_first_use_time = "%s",
+                account_last_modified_time = "%s",
+                account_last_changed_time = "%s",
+                account_last_activity_time = "%s",
+                account_container_count = %s,
+                account_object_count = %s,
+                account_bytes_used = %s
+            UPSERT WHERE
+                account_uri = "%s"
+        '''
+
+        for row in data:
+            formatted_query = query % (
+                row['account_uri'],
+                row['account_name'],
+                row['account_tenant_id'],
+                row['account_first_use_time'],
+                row['account_last_modified_time'],
+                row['account_last_changed_time'],
+                row['account_last_activity_time'],
+                row['account_container_count'],
+                row['account_object_count'],
+                row['account_bytes_used'],
+                row['account_uri']
+            )
+            self.conn.command(formatted_query)
+
+    def insert_container_md(self, data):
+        """Data insertion method for container metadata, does not update delete_at or delete_time."""
+        query = '''UPDATE Metadata SET
+                account_uri = "%s",
+                account_name = "%s",
+                account_tenant_id = "%s",
+                account_first_use_time = "%s",
+                account_last_modified_time = "%s",
+                account_last_changed_time = "%s",
+                account_last_activity_time = "%s",
+                account_container_count = %s,
+                account_object_count = %s,
+                account_bytes_used = %s,
+                container_uri = "%s",
+                container_name = "%s",
+                container_account_name = "%s",
+                container_create_time = "%s",
+                container_last_modified_time = "%s",
+                container_last_changed_time = "%s",
+                container_last_activity_time = "%s",
+                container_read_permissions = "%s",
+                container_write_permissions = "%s",
+                container_sync_to = "%s",
+                container_sync_key = "%s",
+                container_versions_location = "%s",
+                container_object_count = %s,
+                container_bytes_used = %s
+            UPSERT WHERE
+                container_uri = "%s"
+        '''
+
+        for row in data:
+            # Query for account details for a denormalized insertion.
+            acc_query = '''SELECT
                     account_uri,
                     account_name,
                     account_tenant_id,
                     account_first_use_time,
                     account_last_modified_time,
                     account_last_changed_time,
-                    account_delete_time,
                     account_last_activity_time,
                     account_container_count,
                     account_object_count,
                     account_bytes_used
-                )
-                VALUES ("%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s")
-                ;
-            '''
-            # Build and execute query for each requested insertion
-            conn.commit()
-            for item in data:
-                formatted_query = query % (
-                    item['account_uri'],
-                    item['account_name'],
-                    item['account_tenant_id'],
-                    item['account_first_use_time'],
-                    item['account_last_modified_time'],
-                    item['account_last_changed_time'],
-                    item['account_delete_time'],
-                    item['account_last_activity_time'],
-                    item['account_container_count'],
-                    item['account_object_count'],
-                    item['account_bytes_used']
-                )
-                for custom in item:
-                    if(custom.startswith("account_meta")):
-                        self.insert_custom_md(
-                            conn, item['account_uri'], custom, item[custom])
-                conn.execute(formatted_query)
-            conn.commit()
+                FROM Metadata
+                WHERE
+                    account_name = "%s"
+            ''' % (
+                row['container_account_name']
+            )
+            queryList = self.conn.query(acc_query)
+            if (len(queryList) == 0):
+                print "The parent account could not be found in the DB"
+                return
+            acc_data = queryList[0].oRecordData
+            
+            formatted_query = query % (
+                acc_data['account_uri'],
+                acc_data['account_name'],
+                acc_data['account_tenant_id'],
+                acc_data['account_first_use_time'],
+                acc_data['account_last_modified_time'],
+                acc_data['account_last_changed_time'],
+                acc_data['account_last_activity_time'],
+                acc_data['account_container_count'],
+                acc_data['account_object_count'],
+                acc_data['account_bytes_used'],
+                row['container_uri'],
+                row['container_name'],
+                row['container_account_name'],
+                row['container_create_time'],
+                row['container_last_modified_time'],
+                row['container_last_changed_time'],
+                row['container_last_activity_time'],
+                row['container_read_permissions'],
+                row['container_write_permissions'],
+                row['container_sync_to'],
+                row['container_sync_key'],
+                row['container_versions_location'],
+                row['container_object_count'],
+                row['container_bytes_used'],
+                row['container_uri']
+            )
+            self.conn.command(formatted_query)
 
-    def insert_container_md(self, data):
-        """Data insertion methods for container metadata table"""
-        with self.get() as conn:
-            query = '''
-                INSERT OR REPLACE INTO container_metadata (
+    def insert_object_md(self, data):
+        """Data insertion method for object metadata, does not update delete_at or delete_time."""
+        query = '''UPDATE Metadata SET
+                account_uri = "%s",
+                account_name = "%s",
+                account_tenant_id = "%s",
+                account_first_use_time = "%s",
+                account_last_modified_time = "%s",
+                account_last_changed_time = "%s",
+                account_last_activity_time = "%s",
+                account_container_count = %s,
+                account_object_count = %s,
+                account_bytes_used = %s,
+                container_uri = "%s",
+                container_name = "%s",
+                container_account_name = "%s",
+                container_create_time = "%s",
+                container_last_modified_time = "%s",
+                container_last_changed_time = "%s",
+                container_last_activity_time = "%s",
+                container_read_permissions = "%s",
+                container_write_permissions = "%s",
+                container_sync_to = "%s",
+                container_sync_key = "%s",
+                container_versions_location = "%s",
+                container_object_count = %s,
+                container_bytes_used = %s,
+                object_uri = "%s",
+                object_name = "%s",
+                object_account_name = "%s",
+                object_container_name = "%s",
+                object_location = "%s",
+                object_uri_create_time = "%s",
+                object_last_modified_time = "%s",
+                object_last_changed_time = "%s",
+                object_last_activity_time = "%s",
+                object_etag_hash = "%s",
+                object_content_type = "%s",
+                object_content_length = %s,
+                object_content_encoding = "%s",
+                object_content_disposition = "%s",
+                object_content_language = "%s",
+                object_cache_control = "%s",
+                object_manifest_type = %s,
+                object_manifest = "%s",
+                object_access_control_allow_origin = "%s",
+                object_access_control_allow_credentials = "%s",
+                object_access_control_expose_headers = "%s",
+                object_access_control_max_age = "%s",
+                object_allow_methods = "%s",
+                object_allow_headers = "%s",
+                object_origin = "%s",
+                object_access_control_request_method = "%s",
+                object_access_control_request_headers = "%s"
+            UPSERT WHERE
+                object_uri = "%s"
+        '''
+
+        for row in data:
+            # Query for account details for a denormalized insertion.
+            acc_cont_query = '''SELECT
+                    account_uri,
+                    account_name,
+                    account_tenant_id,
+                    account_first_use_time,
+                    account_last_modified_time,
+                    account_last_changed_time,
+                    account_last_activity_time,
+                    account_container_count,
+                    account_object_count,
+                    account_bytes_used
                     container_uri,
                     container_name,
                     container_account_name,
                     container_create_time,
                     container_last_modified_time,
                     container_last_changed_time,
-                    container_delete_time,
                     container_last_activity_time,
                     container_read_permissions,
                     container_write_permissions,
@@ -202,167 +405,270 @@ class MetadataBroker(DatabaseBroker):
                     container_versions_location,
                     container_object_count,
                     container_bytes_used
-                )
-                VALUES (
-                    "%s", "%s", "%s", "%s",
-                    "%s", "%s", "%s", "%s",
-                    "%s", "%s", "%s", "%s",
-                    "%s", "%s", "%s"
-                )
-                ;
-            '''
-            conn.commit()
-            for item in data:
-                formatted_query = query % (
-                    item['container_uri'],
-                    item['container_name'],
-                    item['container_account_name'],
-                    item['container_create_time'],
-                    item['container_last_modified_time'],
-                    item['container_last_changed_time'],
-                    item['container_delete_time'],
-                    item['container_last_activity_time'],
-                    item['container_read_permissions'],
-                    item['container_write_permissions'],
-                    item['container_sync_to'],
-                    item['container_sync_key'],
-                    item['container_versions_location'],
-                    item['container_object_count'],
-                    item['container_bytes_used']
-                )
-                for custom in item:
-                    if(custom.startswith("container_meta")):
-                        self.insert_custom_md(
-                            conn, item['container_uri'], custom, item[custom])
-                conn.execute(formatted_query)
-            conn.commit()
+                FROM Metadata
+                WHERE
+                    account_name = "%s"
+                AND
+                    container_name = "%s"
+            ''' % (
+                row['object_account_name'],
+                row['object_container_name']
+            )
+            queryList = self.conn.query(acc_cont_query)
+            if (len(queryList) == 0):
+                # The parent container could not be found in the DB
+                return
+            acc_cont_data = queryList[0].oRecordData
+            
+            formatted_query = query % (
+                acc_cont_data['account_uri'],
+                acc_cont_data['account_name'],
+                acc_cont_data['account_tenant_id'],
+                acc_cont_data['account_first_use_time'],
+                acc_cont_data['account_last_modified_time'],
+                acc_cont_data['account_last_changed_time'],
+                acc_cont_data['account_last_activity_time'],
+                acc_cont_data['account_container_count'],
+                acc_cont_data['account_object_count'],
+                acc_cont_data['account_bytes_used'],
+                acc_cont_data['container_uri'],
+                acc_cont_data['container_name'],
+                acc_cont_data['container_account_name'],
+                acc_cont_data['container_create_time'],
+                acc_cont_data['container_last_modified_time'],
+                acc_cont_data['container_last_changed_time'],
+                acc_cont_data['container_last_activity_time'],
+                acc_cont_data['container_read_permissions'],
+                acc_cont_data['container_write_permissions'],
+                acc_cont_data['container_sync_to'],
+                acc_cont_data['container_sync_key'],
+                acc_cont_data['container_versions_location'],
+                acc_cont_data['container_object_count'],
+                acc_cont_data['container_bytes_used'],
+                row['object_uri'],
+                row['object_name'],
+                row['object_account_name'],
+                row['object_container_name'],
+                row['object_location'],
+                row['object_uri_create_time'],
+                row['object_last_modified_time'],
+                row['object_last_changed_time'],
+                row['object_last_activity_time'],
+                row['object_etag_hash'],
+                row['object_content_type'],
+                row['object_content_length'],
+                row['object_content_encoding'],
+                row['object_content_disposition'],
+                row['object_content_language'],
+                row['object_cache_control'],
+                row['object_manifest_type'],
+                row['object_manifest'],
+                row['object_access_control_allow_origin'],
+                row['object_access_control_allow_credentials'],
+                row['object_access_control_expose_headers'],
+                row['object_access_control_max_age'],
+                row['object_access_control_allow_methods'],
+                row['object_access_control_allow_headers'],
+                row['object_origin'],
+                row['object_access_control_request_method'],
+                row['object_access_control_request_headers'],
+                row['object_uri']
+            )
+            self.conn.command(formatted_query)
 
-    def insert_object_md(self, data):
-        """Data insertion methods for object metadata table"""
-        with self.get() as conn:
-            query = '''
-                INSERT OR REPLACE INTO object_metadata (
-                    object_uri,
-                    object_name,
-                    object_account_name,
-                    object_container_name,
-                    object_location,
-                    object_uri_create_time,
-                    object_last_modified_time,
-                    object_last_changed_time,
-                    object_delete_time,
-                    object_last_activity_time,
-                    object_etag_hash,
-                    object_content_type,
-                    object_content_length,
-                    object_content_encoding,
-                    object_content_disposition,
-                    object_content_language,
-                    object_cache_control,
-                    object_delete_at,
-                    object_manifest_type,
-                    object_manifest,
-                    object_access_control_allow_origin,
-                    object_access_control_allow_credentials,
-                    object_access_control_expose_headers,
-                    object_access_control_max_age,
-                    object_access_control_allow_methods,
-                    object_access_control_allow_headers,
-                    object_origin,
-                    object_access_control_request_method,
-                    object_access_control_request_headers
-                ) VALUES (
-                    "%s", "%s", "%s", "%s", "%s", "%s", "%s", "%s", "%s", "%s",
-                    "%s", "%s", "%s", "%s", "%s", "%s", "%s", "%s", "%s", "%s",
-                    "%s", "%s", "%s", "%s", "%s", "%s", "%s", "%s", "%s"
-                )
-                ;
-            '''
-            conn.commit()
-            for item in data:
-                formatted_query = query % (
-                    item['object_uri'],
-                    item['object_name'],
-                    item['object_account_name'],
-                    item['object_container_name'],
-                    item['object_location'],
-                    item['object_uri_create_time'],
-                    item['object_last_modified_time'],
-                    item['object_last_changed_time'],
-                    item['object_delete_time'],
-                    item['object_last_activity_time'],
-                    item['object_etag_hash'],
-                    item['object_content_type'],
-                    item['object_content_length'],
-                    item['object_content_encoding'],
-                    item['object_content_disposition'],
-                    item['object_content_language'],
-                    item['object_cache_control'],
-                    item['object_delete_at'],
-                    item['object_manifest_type'],
-                    item['object_manifest'],
-                    item['object_access_control_allow_origin'],
-                    item['object_access_control_allow_credentials'],
-                    item['object_access_control_expose_headers'],
-                    item['object_access_control_max_age'],
-                    item['object_access_control_allow_methods'],
-                    item['object_access_control_allow_headers'],
-                    item['object_origin'],
-                    item['object_access_control_request_method'],
-                    item['object_access_control_request_headers']
-                )
-                for custom in item:
-                    if(custom.startswith("object_meta")):
-                        self.insert_custom_md(
-                            conn, item['object_uri'], custom, item[custom])
-                conn.execute(formatted_query)
-            conn.commit()
+    def delete_account_md(self, uri, timestamp):
+        """Data deletion method for account metadata."""
+        query = '''UPDATE Metadata SET
+                account_tenant_id = null,
+                account_first_use_time = null,
+                account_last_modified_time = null,
+                account_last_changed_time = null,
+                account_delete_time = "%s",
+                account_last_activity_time = "%s",
+                account_container_count = null,
+                account_object_count = null,
+                account_bytes_used = null
+            WHERE
+                account_uri = "%s"
+        '''
+
+        for row in data:
+            # TODO: Maybe double check for containers/objects that must be deleted
+            # Set container and object values null where container_account_name
+            # or object_account_name match
+            
+            # Delete all account entries
+            formatted_query = query % (
+                timestamp,
+                timestamp,
+                uri
+            )
+            self.conn.command(formatted_query)
+            # TODO: remove custom metadata
+
+    def delete_container_md(self, uri, timestamp):
+        """Data deletion method for container metadata."""
+        query = '''UPDATE Metadata SET
+                container_create_time = null,
+                container_last_modified_time = null,
+                container_last_changed_time = null,
+                container_delete_time = "%s",
+                container_last_activity_time = "%s",
+                container_read_permissions = null,
+                container_write_permissions = null,
+                container_sync_to = null,
+                container_sync_key = null,
+                container_versions_location = null,
+                container_object_count = null,
+                container_bytes_used = null,
+            WHERE
+                container_uri = "%s"
+        '''
+
+        for row in data:
+            # TODO: Maybe double check for objects that must be deleted
+            # Set object values null where object_account_name matches
+            
+            # Delete all account entries
+            formatted_query = query % (
+                timestamp,
+                timestamp,
+                uri
+            )
+            self.conn.command(formatted_query)
+            # TODO: remove custom metadata
+            
+    def delete_object_md(self, uri, timestamp):
+        query = '''UPDATE Metadata SET
+                object_location = null,
+                object_uri_create_time = null,
+                object_last_modified_time = null,
+                object_last_changed_time = null,
+                object_delete_time = "%s",
+                object_last_activity_time = "%s",
+                object_etag_hash = null,
+                object_content_type = null,
+                object_content_length = null,
+                object_content_encoding = null,
+                object_content_disposition = null,
+                object_content_language = null,
+                object_cache_control = null,
+                object_delete_at = null,
+                object_manifest_type = null,
+                object_manifest = null,
+                object_access_control_allow_origin = null,
+                object_access_control_allow_credentials = null,
+                object_access_control_expose_headers = null,
+                object_access_control_max_age = null,
+                object_allow_methods = null,
+                object_allow_headers = null,
+                object_origin = null,
+                object_access_control_request_method = null,
+                object_access_control_request_headers = null
+            WHERE
+                object_uri = "%s"
+        '''
+
+        for row in data:
+            formatted_query = query % (
+                timestamp,
+                timestamp,
+                uri
+            )
+            self.conn.command(formatted_query)
+            # TODO: remove custom metadata
+
+    def delete_custom_md(self, uri):
+        """Not implemented yet"""
+
+    def overwrite_custom_md(self, uri, key, value):
+        """Updates the given field in custom metadata."""
+        query = '''UPDATE Custom SET
+                uri = '%s',
+                custom_key = '%s',
+                custom_value = '%s',
+            WHERE
+                uri = '%s',
+            AND
+                custom_key = '%s'
+        '''
+        formatted_query = \
+            query % (uri, key, value, uri, key)
+        self.conn.command(formatted_query)
+
+    def overwrite_account_md(self, data):
+        """Updates the given account fields in metadata."""
+        query = "UPDATE Metadata SET "
+        inserted_fields = []
+        for field in account_fields:
+            if field in data:
+                inserted_fields.append(str(field) + " = '" + str(data[field]) + "'")
+        if (len(inserted_fields) == 0):
+            print "backend.py:overwrite_account_md: Data malformed, no valid fields provided."
+        query += " and " + " ,".join(inserted_fields)
+        query += " WHERE account_uri = '" + str(data['account_uri']) + "'"
+        self.conn.command(query)
+
+    # TODO: check for parent account changes and update
+    # denormalized fields.
+    def overwrite_container_md(self, data):
+        """Updates the given container fields in metadata"""
+        query = "UPDATE Metadata SET "
+        inserted_fields = []
+        for field in container_fields:
+            if field in data:
+                inserted_fields.append(str(field) + " = '" + str(data[field]) + "'")
+        if (len(inserted_fields) == 0):
+            print "backend.py:overwrite_container_md: Data malformed, no valid fields provided."
+        query += " and " + " ,".join(inserted_fields)
+        query += " WHERE container_uri = '" + str(data['container_uri']) + "'"
+        self.conn.command(query)
+
+    # TODO: check for parent account or container changes and update
+    # denormalized fields.
+    def overwrite_object_md(self, data):
+        """Updates the given object fields in metadata"""
+        query = "UPDATE Metadata SET "
+        inserted_fields = []
+        for field in object_fields:
+            if field in data:
+                inserted_fields.append(str(field) + " = '" + str(data[field]) + "'")
+        if (len(inserted_fields) == 0):
+            print "backend.py:overwrite_object_md: Data malformed, no valid fields provided."
+        query += " and " + " ,".join(inserted_fields)
+        query += " WHERE object_uri = '" + str(data['object_uri']) + "'"
+        self.conn.command(query)
 
     def getAll(self):
         """
-        Dump everything
+        Dump everything, used for debugging.
         """
-        with self.get() as conn:
-            conn.row_factory = dict_factory
-            cur = conn.cursor()
-            cur.execute("SELECT * FROM object_metadata")
-            obj_data = cur.fetchall()
-            cur.execute("SELECT * FROM container_metadata")
-            con_data = cur.fetchall()
-            cur.execute("SELECT * FROM account_metadata")
-            acc_data = cur.fetchall()
+        obj_data = [record.oRecordData for record in self.conn.query("SELECT FROM Metadata")]
 
         return ''.join([
             json.dumps(obj_data), "\n\n", json.dumps(con_data), "\n\n",
             json.dumps(acc_data)
         ])
 
-    
     def get_attributes_query(self, acc, con, obj, attrs):
         """
-        This query starts off the query string by adding the Attributes
+        This query starts off the query STRING by adding the Attributes
         to be returned in the SELECT statement.
         Also handles scoping by passing in the scope info:
+
             If we are in object scope, the only things visible
             are this object, the parent container, and the parent
             account.
+
             If in container scope. All objects in the container are
             visible, this container, and the parent account.
+
             If in account scope, All objects and containers in the scope
             are visible, as well as this account.
         """
         # Catch bad query
         if attrsStartWith(attrs) == "BAD":
             return "BAD"
-
-        # JOIN all our tables together so the API can do queries
-        # across tables.
-        fromStr = """account_metadata
-            INNER JOIN container_metadata
-            ON account_name=container_account_name
-            INNER JOIN object_metadata
-            ON account_name=object_account_name
-            AND container_name=object_container_name"""
 
         # Object Scope
         if obj != "" and obj is not None:
@@ -376,62 +682,54 @@ class MetadataBroker(DatabaseBroker):
                 uri = Curi
             else:
                 uri = Auri
-            return """
-                SELECT distinct %s,%s_uri
-                FROM %s
+            return """SELECT %s,%s_uri
+                FROM Metadata
                 WHERE %s_uri=%s
-            """ % (attrs, domain, fromStr, domain, uri)
+            """ % (attrs, domain, domain, domain, uri)
 
         # Container Scope
         elif con != "" and con is not None:
             uri = "'/" + acc + "/" + con + "'"
             Auri = "'/" + acc + "'"
             if attrsStartWith(attrs) == 'object':
-                return """
-                    SELECT distinct %s,object_uri
-                    FROM object_metadata
-                    WHERE object_container_name=%s
-                """ % (attrs, "'" + con + "'")
+                return ("SELECT %s,object_uri "
+                    "FROM Metadata "
+                    "WHERE object_container_name=%s"
+                ) % (attrs, "'" + con + "'")
 
             elif attrsStartWith(attrs) == 'container':
-                return """
-                    SELECT distinct %s,container_uri
-                    FROM %s
-                    WHERE container_uri=%s
-                """ % (attrs, fromStr, uri)
+                return ("SELECT %s,container_uri "
+                    "FROM Metadata "
+                    "WHERE container_uri=%s"
+                ) % (attrs, uri)
 
             elif attrsStartWith(attrs) == 'account':
-                return """
-                    SELECT distinct %s,account_uri
-                    FROM %s
-                    WHERE account_uri=%s
-                """ % (attrs, fromStr, Auri)
+                return ("SELECT %s,account_uri "
+                    "FROM Metadata "
+                    "WHERE account_uri=%s"
+                ) % (attrs, Auri)
 
         # Account scope
         elif acc != "" and acc is not None:
             uri = "'/" + acc + "'"
             if attrsStartWith(attrs) == 'object':
-                return """
-                    SELECT distinct %s,object_uri
-                    FROM %s
-                    WHERE object_account_name='%s'
-                """ % (attrs, fromStr, acc)
+                return ("SELECT %s,object_uri "
+                    "FROM Metadata "
+                    "WHERE object_account_name='%s'"
+                ) % (attrs, acc)
 
             elif attrsStartWith(attrs) == 'container':
-                return """
-                    SELECT distinct %s,container_uri
-                    FROM %s
-                    WHERE container_account_name='%s'
-                """ % (attrs, fromStr, acc)
+                return ("SELECT %s,container_uri "
+                    "FROM Metadata "
+                    "WHERE container_account_name='%s'"
+                ) % (attrs, acc)
 
             elif attrsStartWith(attrs) == 'account':
-                return """
-                    SELECT distinct %s,account_uri
-                    FROM %s
-                    WHERE account_uri=%s
-                """ % (attrs, fromStr, uri)
+                return ("SELECT %s,account_uri "
+                    "FROM Metadata "
+                    "WHERE account_uri=%s"
+                ) % (attrs, uri)
 
-    
     def get_uri_query(self, sql, queries):
         '''
         URI Query parser
@@ -445,17 +743,21 @@ class MetadataBroker(DatabaseBroker):
         queries = queries.translate(None,';%[]&')
         query = ""
         querysplit = queries.split(" ")
+        count = 1
         for i in querysplit:
-            if (i.startswith("object_meta") 
-                        or i.startswith("container_meta") 
+            if (i.startswith("object_meta")
+                        or i.startswith("container_meta")
                         or i.startswith("account_meta")):
                 first = i.split("_")[0]
                 key = "_".join(i.translate(maketrans("<>!=","____")).split("_")[:3])
-                i = """EXISTS (SELECT * FROM custom_metadata 
-                        where uri == %s_uri AND custom_key='%s' 
-                        AND custom_value%s)""" %\
-                        (first,key,i[len(key):])
-            query += " " + i 
+                # Append a new subquery variable after FROM section.
+                sql = sql.replace("FROM Metadata","FROM Metadata let $temp" + count + "=(SELECT FROM Custom WHERE custom_key=" + first + " AND uri=" + key + " AND custom_value" + i[len(key):] + ") ")
+                # Add WHERE condition that subquery returns results.
+                i = "$temp" + count + ".size() > 0"
+                count += 1
+            # TODO: must add spaces around '<' and '>' or orientDB has
+            # formatting errors.
+            query += " " + i
 
         return sql + " AND" + query
 
@@ -467,25 +769,22 @@ class MetadataBroker(DatabaseBroker):
         before this function is called. Only merges attributes in the
         customAttrs list passed in.
         """
-        with self.get() as conn:
-            for x in sysMetaList:
-                uri = x.keys()[0]
-                query = """SELECT custom_key, custom_value
-                FROM custom_metadata
-                WHERE uri='%s'
-                """ % uri
-                cur = conn.cursor()
-                cur.execute(query)
-                l = cur.fetchall()
-                for d in l:
-                    if (d['custom_key'] in customAttrs.split(',')) or \
-                        (all_obj_meta and
-                            d['custom_key'].startswith("object_meta")) or \
-                        (all_con_meta and
-                            d['custom_key'].startswith("container_meta")) or \
-                        (all_acc_meta and
-                            d['custom_key'].startswith("account_meta")):
-                                x[uri][d['custom_key']] = d['custom_value']
+        for x in sysMetaList:
+            uri = x.keys()[0]
+            query = """SELECT custom_key, custom_value
+            FROM Custom
+            WHERE uri='%s'
+            """ % uri
+            l = self.conn.query(query)
+            for d in l:
+                if (d['custom_key'] in customAttrs.split(',')) or \
+                    (all_obj_meta and
+                        d['custom_key'].startswith("object_meta")) or \
+                    (all_con_meta and
+                        d['custom_key'].startswith("container_meta")) or \
+                    (all_acc_meta and
+                        d['custom_key'].startswith("account_meta")):
+                            x[uri][d['custom_key']] = d['custom_value']
         return sysMetaList
 
     def execute_query(self, query, acc, con, obj, includeURI):
@@ -501,72 +800,57 @@ class MetadataBroker(DatabaseBroker):
         Each 'row' is now a dictionary in a list
         This list of dictonaries is returned
         """
-        with self.get() as conn:
-            conn.row_factory = dict_factory
-            cur = conn.cursor()
-            cur.execute(query)
-            queryList = cur.fetchall()
-            retList = []
-            for row in queryList:
-                if not includeURI:
-                    try:
-                        uri = row['object_uri']
+        queryList = self.conn.query(query)
+        retList = []
+        for rowData in queryList:
+            row = rowData.oRecordData
+            if not includeURI:
+                try:
+                    uri = row['object_uri']
+                    if not any(uri in d for d in retList):
                         retList.append({uri: row})
-                        del row['object_uri']
-                    except KeyError:
-                        pass
-                    try:
-                        uri = row['container_uri']
+                    del row['object_uri']
+                except KeyError:
+                    pass
+                try:
+                    uri = row['container_uri']
+                    if not any(uri in d for d in retList):
                         retList.append({uri: row})
-                        del row['container_uri']
-                    except KeyError:
-                        pass
-                    try:
-                        uri = row['account_uri']
+                    del row['container_uri']
+                except KeyError:
+                    pass
+                try:
+                    uri = row['account_uri']
+                    if not any(uri in d for d in retList):
                         retList.append({uri: row})
-                        del row['account_uri']
-                    except KeyError:
-                        pass
-                else:
-                    try:
-                        retList.append({row['object_uri']: row})
-                    except KeyError:
-                        pass
-                    try:
-                        retList.append({row['container_uri']: row})
-                    except KeyError:
-                        pass
-                    try:
-                        retList.append({row['account_uri']: row})
-                    except KeyError:
-                        pass
-            return retList
+                    del row['account_uri']
+                except KeyError:
+                    pass
+            else:
+                try:
+                    uri = row['object_uri']
+                    if not any(uri in d for d in retList):
+                        retList.append({uri: row})
+                except KeyError:
+                    pass
+                try:
+                    uri = row['container_uri']
+                    if not any(uri in d for d in retList):
+                        retList.append({uri: row})
+                except KeyError:
+                    pass
+                try:
+                    uri = row['account_uri']
+                    if not any(uri in d for d in retList):
+                        retList.append({uri: row})
+                except KeyError:
+                    pass
+        return retList
 
-    def is_deleted(self, mdtable, timestamp=None):
-        '''
-        Determine whether a DB is considered deleted
-        :param mdtable: a string representing the relevant object type
-            (account, container, object)
-        :returns: True if the DB is considered deleted, False otherwise
-        '''
-        if self.db_file != ':memory:' and not os.path.exists(self.db_file):
-            return True
-        self._commit_puts_stale_ok()
-        return False
-
-    def empty(self):
-        """
-        Check if the Metadata DB is empty.
-        :returns: True if the database has no metadata.
-        """
-        self._commit_puts_stale_ok()
-        with self.get() as conn:
-            row = conn.execute(
-                'SELECT account_container_count from account_metadata'). \
-                fetchone()
-            return (row[0] == 0)
-
-
+    def is_initialized(self):
+        """Returns true if the database has tables and is ready for use."""
+        row = self.conn.query("select from (select expand(classes) from metadata:schema) where name = 'Metadata'")
+        return len(row) != 0
 
 def dict_factory(cursor, row):
     """Converts query return into a dictionary"""
@@ -574,8 +858,6 @@ def dict_factory(cursor, row):
     for idx, col in enumerate(cursor.description):
         d[col[0]] = row[idx]
     return d
-
-
 
 def attachURI(metaDict, acc, con, obj):
     """Add URI to dict as `label`"""
@@ -586,8 +868,6 @@ def attachURI(metaDict, acc, con, obj):
     else:
         uri = '/' + acc
     return {uri: metaDict}
-
-
 
 def attrsStartWith(attrs):
     """
