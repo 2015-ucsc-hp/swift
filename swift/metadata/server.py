@@ -433,7 +433,7 @@ class MetadataController(object):
                                 (key, value)
                                 for key, (value, timestamp) in broker.metadata.iteritems()
                                 if value != '' and is_sys_or_user_meta('container', key))
-                            sys_md = format_container_metadata(md)
+                            sys_md = format_con_metadata(md)
                             user_md = format_custom_metadata(md)
                             if 'X-Container-Read' in req.headers:
                                 sys_md['container_read_permissions'] = req.headers['X-Container-Read']
@@ -476,11 +476,12 @@ class MetadataController(object):
         version, acc, con, obj = split_path(req.path, 1, 4, True)
         timestamp = Timestamp(time.time()).isoformat()
         data_type = ''
+        md = {}
         if not con and not obj:
             #do nothing. accounts cannot be deleted
             return
         elif not obj:
-            md = build_con_metadata(md)
+            md = format_con_metadata(md)
             md['container_delete_time'] = timestamp
             md['container_last_activity_time'] = timestamp
             data_type = 'container'
@@ -491,7 +492,7 @@ class MetadataController(object):
             #TODO: overwrite container metadata
             #TODO: delete container custom metadata
         else:
-            md = build_obj_metadata(md)
+            md = format_obj_metadata(md)
             md['object_delete_time'] = timestamp
             md['object_last_activity_time'] = timestamp
             data_type = 'object'

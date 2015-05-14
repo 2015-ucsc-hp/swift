@@ -36,9 +36,9 @@ ALL_SERVERS = ['account-auditor', 'account-server', 'container-auditor',
                'object-expirer', 'object-replicator',
                'object-reconstructor', 'object-updater',
                'proxy-server', 'account-replicator', 'account-reaper',
-		'metadata-server']
+               'metadata-server']
 MAIN_SERVERS = ['proxy-server', 'account-server', 'container-server',
-                'object-server']
+                'object-server', 'metadata-server']
 REST_SERVERS = [s for s in ALL_SERVERS if s not in MAIN_SERVERS]
 GRACEFUL_SHUTDOWN_SERVERS = MAIN_SERVERS + ['auth-server']
 START_ONCE_SERVERS = REST_SERVERS
