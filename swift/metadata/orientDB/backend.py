@@ -504,7 +504,7 @@ class MetadataBroker(OrientDBBroker):
                 uri
             )
             self.conn.command(formatted_query)
-            # TODO: remove custom metadata
+            self.delete_custom_md(uri)
 
     def delete_container_md(self, uri, timestamp):
         """Data deletion method for container metadata."""
@@ -536,7 +536,7 @@ class MetadataBroker(OrientDBBroker):
                 uri
             )
             self.conn.command(formatted_query)
-            # TODO: remove custom metadata
+            self.delete_custom_md(uri)
             
     def delete_object_md(self, uri, timestamp):
         query = '''UPDATE Metadata SET
@@ -576,11 +576,17 @@ class MetadataBroker(OrientDBBroker):
                 uri
             )
             self.conn.command(formatted_query)
-            # TODO: remove custom metadata
+            self.delete_custom_md(uri)
 
     def delete_custom_md(self, uri):
         """Not implemented yet"""
-
+        query = '''DELETE from Custom
+            WHERE
+                uri = '%s',
+        '''
+        formatted_query = query % (uri)
+        self.conn.command(formatted_query)
+        
     def overwrite_custom_md(self, uri, key, value):
         """Updates the given field in custom metadata."""
         query = '''UPDATE Custom SET
@@ -764,13 +770,14 @@ class MetadataBroker(OrientDBBroker):
                         or i.startswith("account_meta")):
                 first = i.split("_")[0]
                 key = "_".join(i.translate(maketrans("<>!=","____")).split("_")[:3])
+                # TODO: check orient's format for multiple let statements
                 # Append a new subquery variable after FROM section.
                 sql = sql.replace("FROM Metadata","FROM Metadata let $temp" + count + "=(SELECT FROM Custom WHERE custom_key=" + first + " AND uri=" + key + " AND custom_value" + i[len(key):] + ") ")
                 # Add WHERE condition that subquery returns results.
                 i = "$temp" + count + ".size() > 0"
                 count += 1
-            # TODO: must add spaces around '<' and '>' or orientDB has
-            # formatting errors.
+            # TODO: orientDB has an error in their query parser and must 
+            # have a space between comparison operators and numbers.
             query += " " + i
 
         return sql + " AND" + query
