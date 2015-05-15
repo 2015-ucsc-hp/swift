@@ -682,29 +682,37 @@ class MetadataBroker(OrientDBBroker):
                 uri = Curi
             else:
                 uri = Auri
-            return """SELECT %s,%s_uri
+            if domain + '_uri' not in attrs:
+                attrs += "," + domain + "_uri"
+            return """SELECT %s
                 FROM Metadata
                 WHERE %s_uri=%s
-            """ % (attrs, domain, domain, domain, uri)
+            """ % (attrs, domain, uri)
 
         # Container Scope
         elif con != "" and con is not None:
             uri = "'/" + acc + "/" + con + "'"
             Auri = "'/" + acc + "'"
             if attrsStartWith(attrs) == 'object':
-                return ("SELECT %s,object_uri "
+                if 'object_uri' not in attrs:
+                    attrs += ",object_uri"
+                return ("SELECT %s "
                     "FROM Metadata "
                     "WHERE object_container_name=%s"
                 ) % (attrs, "'" + con + "'")
 
             elif attrsStartWith(attrs) == 'container':
-                return ("SELECT %s,container_uri "
+                if 'container_uri' not in attrs:
+                    attrs += ",container_uri"
+                return ("SELECT %s "
                     "FROM Metadata "
                     "WHERE container_uri=%s"
                 ) % (attrs, uri)
 
             elif attrsStartWith(attrs) == 'account':
-                return ("SELECT %s,account_uri "
+                if 'account_uri' not in attrs:
+                    attrs += ",account_uri"
+                return ("SELECT %s "
                     "FROM Metadata "
                     "WHERE account_uri=%s"
                 ) % (attrs, Auri)
@@ -713,19 +721,25 @@ class MetadataBroker(OrientDBBroker):
         elif acc != "" and acc is not None:
             uri = "'/" + acc + "'"
             if attrsStartWith(attrs) == 'object':
-                return ("SELECT %s,object_uri "
+                if 'object_uri' not in attrs:
+                    attrs += ",object_uri"
+                return ("SELECT %s "
                     "FROM Metadata "
                     "WHERE object_account_name='%s'"
                 ) % (attrs, acc)
 
             elif attrsStartWith(attrs) == 'container':
-                return ("SELECT %s,container_uri "
+                if 'container_uri' not in attrs:
+                    attrs += ",container_uri"
+                return ("SELECT %s "
                     "FROM Metadata "
                     "WHERE container_account_name='%s'"
                 ) % (attrs, acc)
 
             elif attrsStartWith(attrs) == 'account':
-                return ("SELECT %s,account_uri "
+                if 'account_uri' not in attrs:
+                    attrs += ",account_uri"
+                return ("SELECT %s "
                     "FROM Metadata "
                     "WHERE account_uri=%s"
                 ) % (attrs, uri)
@@ -804,6 +818,8 @@ class MetadataBroker(OrientDBBroker):
         retList = []
         for rowData in queryList:
             row = rowData.oRecordData
+            if 'account_uri2' in row:
+                del myDict['key']
             if not includeURI:
                 try:
                     uri = row['object_uri']
