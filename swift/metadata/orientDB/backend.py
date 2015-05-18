@@ -504,7 +504,7 @@ class MetadataBroker(OrientDBBroker):
                 uri
             )
             self.conn.command(formatted_query)
-            self.delete_custom_md(uri)
+            # TODO: remove custom metadata
 
     def delete_container_md(self, uri, timestamp):
         """Data deletion method for container metadata."""
@@ -536,7 +536,7 @@ class MetadataBroker(OrientDBBroker):
                 uri
             )
             self.conn.command(formatted_query)
-            self.delete_custom_md(uri)
+            # TODO: remove custom metadata
             
     def delete_object_md(self, uri, timestamp):
         query = '''UPDATE Metadata SET
@@ -576,17 +576,11 @@ class MetadataBroker(OrientDBBroker):
                 uri
             )
             self.conn.command(formatted_query)
-            self.delete_custom_md(uri)
+            # TODO: remove custom metadata
 
     def delete_custom_md(self, uri):
         """Not implemented yet"""
-        query = '''DELETE from Custom
-            WHERE
-                uri = '%s',
-        '''
-        formatted_query = query % (uri)
-        self.conn.command(formatted_query)
-        
+
     def overwrite_custom_md(self, uri, key, value):
         """Updates the given field in custom metadata."""
         query = '''UPDATE Custom SET
@@ -688,37 +682,29 @@ class MetadataBroker(OrientDBBroker):
                 uri = Curi
             else:
                 uri = Auri
-            if domain + '_uri' not in attrs:
-                attrs += "," + domain + "_uri"
-            return """SELECT %s
+            return """SELECT %s,%s_uri
                 FROM Metadata
                 WHERE %s_uri=%s
-            """ % (attrs, domain, uri)
+            """ % (attrs, domain, domain, domain, uri)
 
         # Container Scope
         elif con != "" and con is not None:
             uri = "'/" + acc + "/" + con + "'"
             Auri = "'/" + acc + "'"
             if attrsStartWith(attrs) == 'object':
-                if 'object_uri' not in attrs:
-                    attrs += ",object_uri"
-                return ("SELECT %s "
+                return ("SELECT %s,object_uri "
                     "FROM Metadata "
                     "WHERE object_container_name=%s"
                 ) % (attrs, "'" + con + "'")
 
             elif attrsStartWith(attrs) == 'container':
-                if 'container_uri' not in attrs:
-                    attrs += ",container_uri"
-                return ("SELECT %s "
+                return ("SELECT %s,container_uri "
                     "FROM Metadata "
                     "WHERE container_uri=%s"
                 ) % (attrs, uri)
 
             elif attrsStartWith(attrs) == 'account':
-                if 'account_uri' not in attrs:
-                    attrs += ",account_uri"
-                return ("SELECT %s "
+                return ("SELECT %s,account_uri "
                     "FROM Metadata "
                     "WHERE account_uri=%s"
                 ) % (attrs, Auri)
@@ -727,25 +713,19 @@ class MetadataBroker(OrientDBBroker):
         elif acc != "" and acc is not None:
             uri = "'/" + acc + "'"
             if attrsStartWith(attrs) == 'object':
-                if 'object_uri' not in attrs:
-                    attrs += ",object_uri"
-                return ("SELECT %s "
+                return ("SELECT %s,object_uri "
                     "FROM Metadata "
                     "WHERE object_account_name='%s'"
                 ) % (attrs, acc)
 
             elif attrsStartWith(attrs) == 'container':
-                if 'container_uri' not in attrs:
-                    attrs += ",container_uri"
-                return ("SELECT %s "
+                return ("SELECT %s,container_uri "
                     "FROM Metadata "
                     "WHERE container_account_name='%s'"
                 ) % (attrs, acc)
 
             elif attrsStartWith(attrs) == 'account':
-                if 'account_uri' not in attrs:
-                    attrs += ",account_uri"
-                return ("SELECT %s "
+                return ("SELECT %s,account_uri "
                     "FROM Metadata "
                     "WHERE account_uri=%s"
                 ) % (attrs, uri)
@@ -770,14 +750,13 @@ class MetadataBroker(OrientDBBroker):
                         or i.startswith("account_meta")):
                 first = i.split("_")[0]
                 key = "_".join(i.translate(maketrans("<>!=","____")).split("_")[:3])
-                # TODO: check orient's format for multiple let statements
                 # Append a new subquery variable after FROM section.
                 sql = sql.replace("FROM Metadata","FROM Metadata let $temp" + count + "=(SELECT FROM Custom WHERE custom_key=" + first + " AND uri=" + key + " AND custom_value" + i[len(key):] + ") ")
                 # Add WHERE condition that subquery returns results.
                 i = "$temp" + count + ".size() > 0"
                 count += 1
-            # TODO: orientDB has an error in their query parser and must 
-            # have a space between comparison operators and numbers.
+            # TODO: must add spaces around '<' and '>' or orientDB has
+            # formatting errors.
             query += " " + i
 
         return sql + " AND" + query
@@ -825,8 +804,6 @@ class MetadataBroker(OrientDBBroker):
         retList = []
         for rowData in queryList:
             row = rowData.oRecordData
-            if 'account_uri2' in row:
-                del myDict['key']
             if not includeURI:
                 try:
                     uri = row['object_uri']

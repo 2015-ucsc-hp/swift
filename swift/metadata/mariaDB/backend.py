@@ -27,6 +27,7 @@ class MariaDBBroker(object):
     server.py calls MariaDBBroker.initialize(),
     if the tables do not exist server.py calls MetadataBroker._initialize()
     """
+    # TODO: Retrieve IP/user/pw of load balancer from configuration file
     def __init__(self,db_ip,db_port,db_user,db_pw):
         self.conn = None
         self.db_ip = db_ip
@@ -40,17 +41,7 @@ class MariaDBBroker(object):
         """
         Create and connect to the DB
         """
-        try:
-            self.conn = mdb.connect(self.db_ip, self.db_user, self.db_pw, 'metadata')
-        except mysql.connector.Error as err:
-            if err.errno == errorcode.ER_ACCESS_DENIED_ERROR:
-                print "Something is wrong with your user name or password"
-            elif err.errno == errorcode.ER_BAD_DB_ERROR:
-                self.conn = mdb.connect(self.db_ip, self.db_user, self.db_pw)
-                cursor = self.conn.cursor()
-                cursor.execute('CREATE DATABASE metadata')
-        if not is_initialized():
-            self._initialize()
+        self.conn = mdb.connect(self.db_ip, self.db_user, self.db_pw, 'metadata')
 
 class MetadataBroker(MariaDBBroker):
 
