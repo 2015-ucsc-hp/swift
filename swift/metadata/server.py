@@ -179,7 +179,6 @@ class MetadataController(object):
             self.mount_check,
             logger=self.logger
         )
-        
         self.diskfile_mgr = DiskFileManager(conf,self.logger)
 
         self.db_ip = conf.get('db_ip', '127.0.0.1')
@@ -192,7 +191,8 @@ class MetadataController(object):
 
         swift.common.db.DB_PREALLOCATION = config_true_value(
             conf.get('db_preallocation', 'f'))
-
+        self.broker = self._get_metadata_broker()#
+        self.broker.initialize()#
     def _get_metadata_broker(self, **kwargs):
         """
         Returns an instance of the DB abstraction layer object (broker)
@@ -295,8 +295,8 @@ class MetadataController(object):
         Custom attributes need to be handled specially, since they exist
         in a seperate table
         """
-        broker = self._get_metadata_broker()
-	broker.initialize()
+        #broker = self._get_metadata_broker()
+	#broker.initialize()
 
         base_version, acc, con, obj = split_path(req.path, 1, 4, True)
         if 'sorted' in req.headers:
@@ -336,36 +336,36 @@ class MetadataController(object):
 
             # Builds initial query containing the
             # split attributes for each item type
-            accQuery = broker.get_attributes_query(acc, con, obj, accAttrs)
-            conQuery = broker.get_attributes_query(acc, con, obj, conAttrs)
-            objQuery = broker.get_attributes_query(acc, con, obj, objAttrs)
+            accQuery = self.broker.get_attributes_query(acc, con, obj, accAttrs)
+            conQuery = self.broker.get_attributes_query(acc, con, obj, conAttrs)
+            objQuery = self.broker.get_attributes_query(acc, con, obj, objAttrs)
 
             # If there is a query in the request add it to the end
             # of the WHERE clause of the SQL
             if 'query' in req.headers:
                 query = req.headers['query']
-                accQuery = broker.get_uri_query(accQuery, query)
-                conQuery = broker.get_uri_query(conQuery, query)
-                objQuery = broker.get_uri_query(objQuery, query)
+                accQuery = self.broker.get_uri_query(accQuery, query)
+                conQuery = self.broker.get_uri_query(conQuery, query)
+                objQuery = self.broker.get_uri_query(objQuery, query)
 
             # if successful query add the results to the end of the
             # accumulator list
             ret = []
             if not accQuery.startswith("BAD"):
-                ret.extend(broker.execute_query(
+                ret.extend(self.broker.execute_query(
                     accQuery, acc, con, obj,
                     'account_uri' in attrs.split(',')))
             if not conQuery.startswith("BAD"):
-                ret.extend(broker.execute_query(
+                ret.extend(self.broker.execute_query(
                     conQuery, acc, con, obj,
                     'container_uri' in attrs.split(',')))
             if not objQuery.startswith("BAD"):
-                ret.extend(broker.execute_query(
+                ret.extend(self.broker.execute_query(
                     objQuery, acc, con, obj,
                     'object_uri' in attrs.split(',')))
 
             # query the custom table
-            ret = broker.custom_attributes_query(
+            ret = self.broker.custom_attributes_query(
                 customAttrs, ret, all_obj_meta, all_con_meta, all_acc_meta)
 
             """
@@ -411,8 +411,8 @@ class MetadataController(object):
         version, acc, con, obj = split_path(req.path, 1, 4, True)
         stor_policy = req.headers['storage_policy']
         ring = POLICIES.get_object_ring(stor_policy, '/etc/swift')
-	broke = self._get_metadata_broker()
-	broke.initialize()
+	#broker = self._get_metadata_broker()
+	#broker.initialize()
 
         #Handle Container PUT
         if not obj:
@@ -427,11 +427,11 @@ class MetadataController(object):
                             path = os.path.join(self.root + item, db_dir, hsh + '.db')
                             #TODO: move kwargs
                             kwargs = {'account':acc, 'container':con, 'logger':self.logger}
-                            broker= swift.container.backend.ContainerBroker(path, **kwargs)
-                            md = broker.get_info()
+                            md_broker= swift.container.backend.ContainerBroker(path, **kwargs)
+                            md = md_broker.get_info()
                             md.update(
                                 (key, value)
-                                for key, (value, timestamp) in broker.metadata.iteritems()
+                                for key, (value, timestamp) in md_broker.metadata.iteritems()
                                 if value != '' and is_sys_or_user_meta('container', key))
                             sys_md = format_con_metadata(md)
                             user_md = format_custom_metadata(md)
@@ -442,7 +442,7 @@ class MetadataController(object):
                             #TODO: insert container_last_activity_time
                             #TODO: split meta user/sys
                             #TODO: insert meta
-                            broke.insert_container_md([sys_md])
+                            self.broker.insert_container_md([sys_md])
                             return
                         except DatabaseConnectionError as e:
                             self.logger.warn("DatabaseConnectionError: " + e.path + "\n")
@@ -465,7 +465,7 @@ class MetadataController(object):
                             sys_md['object_location'] = df._data_file
                             user_md = format_custom_metadata(md)
                             #TODO: insert user meta and sys meta
-                            broke.insert_object_md([sys_md])
+                            self.broker.insert_object_md([sys_md])
                         except:
                             self.logger.warn("%s: %s\n"%(str(sys.exc_info()[0]),str(sys.exc_info()[1])))
                             pass
