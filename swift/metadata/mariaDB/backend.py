@@ -41,7 +41,6 @@ class MariaDBBroker(object):
         """
         Create and connect to the DB
         """
-        self.conn = mdb.connect(self.db_ip, self.db_user, self.db_pw, 'metadata')
         try:
             self.conn = mdb.connect(self.db_ip, self.db_user, self.db_pw, 'metadata', port=self.db_port)
         except mdb.Error as e:
