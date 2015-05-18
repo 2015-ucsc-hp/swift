@@ -42,6 +42,17 @@ class MariaDBBroker(object):
         Create and connect to the DB
         """
         self.conn = mdb.connect(self.db_ip, self.db_user, self.db_pw, 'metadata')
+        try:
+            self.conn = mdb.connect(self.db_ip, self.db_user, self.db_pw, 'metadata', port=self.db_port)
+        except mdb.Error as e:
+            if e.args[0] == errorcode.BAD_DB_ERROR:
+                self.conn = mdb.connect(self.db_ip, self.db_user, self.db_pw, port=self.db_port)
+                cursor = self.conn.cursor()
+                cursor.execute('CREATE DATABASE metadata')
+                cursor.execute('USE metadata')
+        finally:
+            if not self.is_initialized():
+                self._initialize()
 
 class MetadataBroker(MariaDBBroker):
 
@@ -200,7 +211,6 @@ class MetadataBroker(MariaDBBroker):
             ;
         '''
         # Build and execute query for each requested insertion
-        self.conn.commit()
         for item in data:
             formatted_query = query % (
                 item['account_uri'],
@@ -278,7 +288,6 @@ class MetadataBroker(MariaDBBroker):
                 container_bytes_used = "%s"
             ;
         '''
-        self.conn.commit()
         for item in data:
             formatted_query = query % (
                 item['container_uri'],
@@ -390,7 +399,6 @@ class MetadataBroker(MariaDBBroker):
                 object_access_control_request_headers = "%s"
             ;
         '''
-        self.conn.commit()
         for item in data:
             formatted_query = query % (
                 item['object_uri'],
@@ -460,6 +468,175 @@ class MetadataBroker(MariaDBBroker):
             cur.execute(formatted_query)
             self.conn.commit()
 
+    def delete_account_md(self, uri, timestamp):
+        """Nullifies fields other than last_activity/delete_time and uri"""
+        query = '''
+            UPDATE account_metadata SET 
+                account_tenant_id = NULL,
+                account_first_use_time = NULL,
+                account_last_modified_time = NULL,
+                account_last_changed_time = NULL,
+                account_delete_time = "%s",
+                account_last_activity_time = "%s",
+                account_container_count = NULL,
+                account_object_count = NULL,
+                account_bytes_used = NULL
+            WHERE
+                account_uri = "%s"
+            ;
+        '''
+        # Build and execute query for each requested insertion
+        formatted_query = query % (
+                timestamp,
+                timestamp,
+                uri
+        )
+        self.delete_custom_md(uri)
+        cur = self.conn.cursor()
+        cur.execute(formatted_query)
+        self.conn.commit()
+     
+    def delete_container_md(self, uri, timestamp):
+        """Nullifies fields other than last_activity/delete_time and uri"""
+        query = '''
+            UPDATE container_metadata SET
+                container_name = NULL,
+                container_account_name = NULL,
+                container_create_time = NULL,
+                container_last_modified_time = NULL,
+                container_last_changed_time = NULL,
+                container_delete_time = "%s",
+                container_last_activity_time = "%s",
+                container_read_permissions = NULL,
+                container_write_permissions = NULL,
+                container_sync_to = NULL,
+                container_sync_key = NULL,
+                container_versions_location = NULL,
+                container_object_count = NULL,
+                container_bytes_used = NULL
+            WHERE
+                container_uri = "%s"
+            ;
+        '''
+        self.conn.commit()
+        formatted_query = query % (
+                timestamp,
+                timestamp,
+                uri
+        )
+        self.delete_custom_md(uri)
+        cur = self.conn.cursor()
+        cur.execute(formatted_query)
+        self.conn.commit()
+
+    def delete_object_md(self, uri, timestamp):
+        """Nullifies fields other than last_activity/delete_time and uri"""
+        query = '''
+            UPDATE object_metadata SET
+                object_name = NULL,
+                object_account_name = NULL,
+                object_container_name = NULL,
+                object_location = NULL,
+                object_uri_create_time = NULL,
+                object_last_modified_time = NULL,
+                object_last_changed_time = NULL,
+                object_delete_time = "%s",
+                object_last_activity_time = "%s",
+                object_etag_hash = NULL,
+                object_content_type = NULL,
+                object_content_length = NULL,
+                object_content_encoding = NULL,
+                object_content_disposition = NULL,
+                object_content_language = NULL,
+                object_cache_control = NULL,
+                object_delete_at = NULL,
+                object_manifest_type = NULL,
+                object_manifest = NULL,
+                object_access_control_allow_origin = NULL,
+                object_access_control_allow_credentials = NULL,
+                object_access_control_expose_headers = NULL,
+                object_access_control_max_age = NULL,
+                object_access_control_allow_methods = NULL,
+                object_access_control_allow_headers = NULL,
+                object_origin = NULL,
+                object_access_control_request_method = NULL,
+                object_access_control_request_headers = NULL
+            WHERE
+                object_uri = "%s"
+            ;
+        '''
+        formatted_query = query % (
+                timestamp,
+                timestamp,
+                uri
+        )
+        self.delete_custom_md(uri)
+        cur = self.conn.cursor()
+        cur.execute(formatted_query)
+        self.conn.commit()
+
+    def delete_custom_md(self, uri):
+        """Removes all custom fields assigned to uri"""
+        """Nullifies fields other than last_activity/delete_time and uri"""
+        query = '''
+            DELETE FROM object_metadata
+            WHERE
+                object_uri = "%s"
+            ;
+        '''
+        formatted_query = query % (
+                uri
+        )
+        self.delete_custom_md(uri)
+        cur = self.conn.cursor()
+        cur.execute(formatted_query)
+        self.conn.commit()
+        
+    def overwrite_account_md(self, data):
+        query = "UPDATE account_metadata SET "
+        inserted_fields = []
+        for field in account_fields:
+            if field in data:
+                inserted_fields.append(str(field) + " = '" + str(data[field]) + "'")
+        query += " WHERE account_uri = '" + str(data['account_uri']) + "';"
+        
+        cur = self.conn.cursor()
+        cur.execute(formatted_query)
+        self.conn.commit()
+
+    def overwrite_container_md(self, data):
+        query = "UPDATE container_metadata SET "
+        inserted_fields = []
+        for field in container_fields:
+            if field in data:
+                inserted_fields.append(str(field) + " = '" + str(data[field]) + "'")
+        query += " WHERE container_uri = '" + str(data['container_uri']) + "';"
+        
+        cur = self.conn.cursor()
+        cur.execute(formatted_query)
+        self.conn.commit()
+        
+    def overwrite_object_md(self, data):
+        query = "UPDATE object_metadata SET "
+        inserted_fields = []
+        for field in object_fields:
+            if field in data:
+                inserted_fields.append(str(field) + " = '" + str(data[field]) + "'")
+        query += " WHERE object_uri = '" + str(data['object_uri']) + "';"
+        
+        cur = self.conn.cursor()
+        cur.execute(formatted_query)
+        self.conn.commit()
+        
+    def overwrite_custom_md(self, uri, key, value):
+        query = "UPDATE custom_metadata SET"
+        for field in data:
+                inserted_fields.append(" custom_value = '" + str(value) + "'")
+        query += " WHERE object_uri = '" + str(data['object_uri']) + "' and custom_key = '" + str(key) + "';"
+        cur = self.conn.cursor()
+        cur.execute(formatted_query)
+        self.conn.commit()
+        
     def getAll(self):
         """
         Dump everything
