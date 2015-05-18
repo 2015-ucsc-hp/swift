@@ -18,7 +18,8 @@ from string import maketrans
 from swift.common.utils import normalize_timestamp
 from swift.common.utils import json
 import MySQLdb as mdb
-                              
+from MySQLdb.constants import ER as errorcode
+
 class MariaDBBroker(object):
     """
     Encapsulates working with an MariaDB database.
