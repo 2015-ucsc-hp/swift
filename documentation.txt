@@ -1,0 +1,163 @@
+UCSC Group
+
+OSMS API
+======================
+Initially forked from Swift 2.2.2
+
+
+Set Up:
+    Create a metadata-server.conf in /etc/swift
+    location: the path to the directory where our code will
+    create a database, below assumes		
+    a Swift All in One type set up
+    bind_port: port to use one metadata server.
+    -------------------------------------------
+    [DEFAULT]
+    # swift_dir = /etc/swift
+    user = swift
+    location = /srv/1/node/sdb1/metadata/
+    devices = /
+    nodecount = 8
+    device1 = srv/1/node/sdb1
+    device2 = srv/2/node/sdb2
+    device3 = srv/3/node/sdb3
+    device4 = srv/4/node/sdb4
+    device5 = srv/1/node/sdb5
+    device6 = srv/2/node/sdb6
+    device7 = srv/3/node/sdb7
+    device8 = srv/4/node/sdb8
+    #default_port = 6090
+    bind_port = 6090
+    # You can specify default log routing here if you want:
+    log_name = metadata-server
+    log_facility = LOG_LOCAL7
+
+    #mount_check must be false when doing loopback devices
+    #on a SAIO install
+    mount_check = false
+    
+    [pipeline:main]
+    pipeline = metadata-server
+
+    [app:metadata-server]
+    use = egg:swift#metadata
+    -------------------------------------------
+
+    In proxy-server.conf you need to add "metadata" to the
+    pipeline. Also add this to the end:
+    --------------------------------------------
+    [filter:metadata]
+    use = egg:swift#metadata
+    --------------------------------------------
+
+    We edited setup.cfg as well as common/manager.py
+    to allow our server/daemons to run via swift command
+    line tools "swift-init" and our /bin/* files are
+    copied to where the other swift /bin files go to
+    be run.
+
+Critical Files/Dirs we added:
+	 - New dir metadata
+	   -server.py
+			WSGI handler
+			     -backend.py
+					Database abstraction
+        -utils.py
+            utility functions to handle:
+                Output formatting
+		       MetaDict formatting
+                Sorting output dicts
+                Sending data between servers
+		- With each existing server (account/container/object)
+		  -crawler.py
+		  - common/middleware/metadata.py
+		    Passes a request as a metadata get to the metadata server if it has ?metadata=v1
+		    	   Observes all other requests and passes them if 
+
+Test coverage:
+     Unit tests are located in test/unit/metadata
+     for the server tests and test/unit/* for the
+     crawlers where * is account/container/object
+     
+     Basic Coverage
+     	   object crawler
+	   	  container crawler
+		  	    server.py (attributes part of query, PUT, GET)
+
+			    Still in progress:
+			    	  backend.py
+					account crawler
+
+Features completed:
+	 
+	 Middleware and Metadata server set up and send/recieve metadata
+
+	 API requests:
+        Attributes:
+            Can filter by attributes. For specific custom attributes
+                there is a bug where you have to include at least one
+                system attribute as well for it to return correctly.
+            Superset attributes as well.
+            
+        Query:
+            Can do queries involving comparison operators (=, !=, >, <, >=, <=)
+            Also support any permutation of AND/OR's
+            Some sanitation is done on the queries. Removes '%' ';' '[' ']' and '&'
+            
+            Query is put onto the end of the WHERE clause in our SQL statement.
+            
+            Queries involving custom attributes works by having a sub query
+                to the custom metadata table.
+            
+        Sorting:
+            Can sort by any attribute returned in the result set.
+            
+        Formatting output:
+            Defaults to plain text, but can do XML and JSON as per the spec.
+            The JSON output uses the json library with tab length set to 4
+                and puts brackets of the same line instead of a newline. This 
+                is slightly different than the spec which has inconsistent spacing.
+            The XML output needed an outside tag for it to be valid XML so we added
+                <metadata> around everything. We also do not use a DOM to create it
+                and just output text. This could be changed easily though. 
+                
+        Services Request implemented with ?metadata=services
+            
+Features not completed:
+    CORS metadata
+    Authorized Searchers Feature (from API)
+    Regular Expressions in query
+    Pagination / limiting
+    Prefix
+    Delimiter
+    Path
+    Load balancing with multiple metadata servers
+    Limit results to Accounts own data.
+    Some attributes not supported (not sent by cralwers):
+        container_read_permissions
+        container_write_permissions
+        container_versions_location
+        object_cache_control
+        object CORS
+        object_manifest
+        object_manifest_type
+    
+Implementation Details:
+
+    In the database there are 4 tables (account_metadata, container_metadata,
+        object_metadata, custom_metadata)
+    Each of the account/container/object table has the System attributes
+        for those items.
+    The custom table holds the custom attributes for all items stored in the system.
+    
+    On every API request, there are 4 queries
+        3 for each of the system attribute tables.
+        Each of these SELECTS the attributes needed
+        From a JOIN of all 3 system tables. This allows
+        for queries to be done on mixed item result sets.
+             
+        There is also one query to the custom table to SELECT
+        the requested custom attributes. The results from this
+        query are put into the list generated from the previous 3
+        queries.
+        
