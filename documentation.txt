@@ -51,52 +51,46 @@ Set Up:
     --------------------------------------------
 
     We edited setup.cfg as well as common/manager.py
-    to allow our server/daemons to run via swift command
+    to allow our server to run via swift command
     line tools "swift-init" and our /bin/* files are
     copied to where the other swift /bin files go to
-    be run.
+    be run (typically /usr/local/bin/ )
 
 Critical Files/Dirs we added:
-	 - New dir metadata
-	   -server.py
+	-New directory swift/metadata
+		-server.py
 			WSGI handler
-			     -backend.py
-					Database abstraction
-        -utils.py
-            utility functions to handle:
-                Output formatting
-		       MetaDict formatting
-                Sorting output dicts
-                Sending data between servers
-		- With each existing server (account/container/object)
-		  -crawler.py
-		  - common/middleware/metadata.py
-		    Passes a request as a metadata get to the metadata server if it has ?metadata=v1
-		    	   Observes all other requests and passes them if 
+		-backend.py
+			Database abstraction (MariaDB and OrientDB versions)
+        	-utils.py
+            		Utility functions to handle:
+                		Output formatting
+		       		MetaDict formatting
+                		Sorting output dictionaries
+                		Sending data between servers
+	-common/middleware/metadata.py
+		Passes a request as a metadata get to the metadata server if it has ?metadata=v1
+		Observes all other requests and passes them normally otherwise
 
 Test coverage:
-     Unit tests are located in test/unit/metadata
-     for the server tests and test/unit/* for the
-     crawlers where * is account/container/object
+	Unit tests are located in test/unit/metadata
+	for the server tests
      
-     Basic Coverage
-     	   object crawler
-	   	  container crawler
-		  	    server.py (attributes part of query, PUT, GET)
+Basic Coverage:
+	server.py (attributes part of query, PUT, GET, DELETE, POST)
 
-			    Still in progress:
-			    	  backend.py
-					account crawler
+Still in progress:
+	server.py (COPY)
 
 Features completed:
-	 
-	 Middleware and Metadata server set up and send/recieve metadata
+	Middleware and Metadata server set up and send/recieve metadata
+	Replication of Metadata server
 
-	 API requests:
+	API requests:
         Attributes:
             Can filter by attributes. For specific custom attributes
-                there is a bug where you have to include at least one
-                system attribute as well for it to return correctly.
+            there is a bug where you have to include at least one
+            system attribute as well for it to return correctly.
             Superset attributes as well.
             
         Query:
@@ -132,10 +126,7 @@ Features not completed:
     Delimiter
     Path
     Load balancing with multiple metadata servers
-    Limit results to Accounts own data.
-    Some attributes not supported (not sent by cralwers):
-        container_read_permissions
-        container_write_permissions
+    Some attributes not supported :
         container_versions_location
         object_cache_control
         object CORS
@@ -160,4 +151,6 @@ Implementation Details:
         the requested custom attributes. The results from this
         query are put into the list generated from the previous 3
         queries.
+    Further Documentation for setting up MariaDB or OrientDB can be found in their 
+    respective directories in /swift/metadata/
         
